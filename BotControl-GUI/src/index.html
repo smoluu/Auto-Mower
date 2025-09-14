@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Robot Control Board</title>
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Three.js for point cloud -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/examples/js/controls/OrbitControls.js"></script>
+  <!-- Chart.js for sensor gauges -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+
+<body>
+  <div id="app">
+    <!-- Sidebar for Sensor Data and Camera Feed -->
+    <div id="sidebar" class="flex flex-col gap-4">
+      <h2 class="text-xl font-bold">Sensor Data</h2>
+      <div id="sensor-data" class="space-y-2">
+        <div>
+          <label class="block text-sm">Temperature:</label>
+          <span id="temp" class="text-lg">-- °C</span>
+        </div>
+        <div>
+          <label class="block text-sm">Speed:</label>
+          <span id="speed" class="text-lg">-- m/s</span>
+        </div>
+        <div>
+          <label class="block text-sm">Battery:</label>
+          <span id="battery" class="text-lg">-- %</span>
+        </div>
+        <canvas id="battery-gauge" width="200" height="100"></canvas>
+      </div>
+      <h2 class="text-xl font-bold mt-4">Camera Feed</h2>
+      <video id="rtsp-feed" autoplay class="w-full rounded" controls></video>
+    </div>
+
+    <!-- Main View with Tabs -->
+    <div id="main-view">
+      <div id="tabs">
+        <div class="tab active" data-tab="point-cloud-tab">Point Cloud</div>
+        <div class="tab" data-tab="camera-tab">Camera</div>
+        <div class="tab" data-tab="settings-tab">Settings</div>
+      </div>
+      <div id="point-cloud-tab" class="tab-content active">
+        <canvas id="point-cloud"></canvas>
+        <div class="absolute top-2 right-2 flex gap-2">
+          <button id="paint-btn" class="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700">Toggle Paint
+            Mode</button>
+          <button id="save-areas-btn" class="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700">Save
+            Areas</button>
+        </div>
+      </div>
+      <div id="camera-tab" class="tab-content p-4">
+        <video id="camera-feed" autoplay class="w-full rounded" controls></video>
+      </div>
+      <div id="settings-tab" class="tab-content p-4 text-white">
+        <h2 class="text-xl font-bold mb-4">Device:</h2>
+        <form id="settings-form" class="space-y-4">
+          <div class="ml-3">
+            <label class="block text-sm">Device IP:</label>
+            <input type="text" id="device-ip" value="127.0.0.1" class="w-full p-2 bg-gray-700 rounded text-white"
+              minlength="7" maxlength="15" size="15" pattern="^(?>(\d|[1-9]\d{2}|1\d\d|2[0-4]\d|25[0-5])\.){3}(?1)$">
+          </div>
+          <div class="ml-3">
+            <label class="block text-sm">Device Port:</label>
+            <input type="number" id="device-port" value="6969" class="w-full p-2 bg-gray-700 rounded text-white" min="1"
+              max="65535" value="12345" pattern="[0-9]{1,5}" required>
+          </div>
+          <div class="ml-3">
+            <label class="block text-sm">UDP Port:</label>
+            <input type="number" id="udp-port" value="8554" class="w-full p-2 bg-gray-700 rounded text-white">
+          </div>
+          <h2 class="text-xl font-bold mb-4">Camera:</h2>
+
+          <div class="ml-3">
+            <label class="block text-sm">RTSP URL:</label>
+            <input type="text" id="rtsp-url" value="rtsp://robot_ip:554/stream"
+              class="w-full p-2 bg-gray-700 rounded text-white">
+          </div>
+          <div class="ml-3">
+            <label class="block text-sm">Brush Size:</label>
+            <input type="number" id="brush-size" value="0.5" step="0.1"
+              class="w-full p-2 bg-gray-700 rounded text-white">
+          </div>
+          <button type="button" id="save-settings"
+            class="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700">Save
+            Settings</button>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // Tab switching
+    const tabs = document.querySelectorAll('.tab');
+    const tabContents = document.querySelectorAll('.tab-content');
+    tabs.forEach(tab => {
+      tab.addEventListener('click', () => {
+        tabs.forEach(t => t.classList.remove('active'));
+        tabContents.forEach(c => c.classList.remove('active'));
+        tab.classList.add('active');
+        document.getElementById(tab.dataset.tab).classList.add('active');
+      });
+    });
+
+    // Three.js setup for point cloud
+    const scene = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+    const renderer = new THREE.WebGLRenderer({ canvas: document.getElementById('point-cloud') });
+    renderer.setSize(window.innerWidth - 300, window.innerHeight - 40);
+    const controls = new THREE.OrbitControls(camera, renderer.domElement);
+    camera.position.z = 5;
+
+    // Point cloud (placeholder, fetch from Rust)
+    const geometry = new THREE.BufferGeometry();
+    const material = new THREE.PointsMaterial({ size: 0.01, vertexColors: true });
+    const points = new THREE.Points(geometry, material);
+    scene.add(points);
+
+    // Animation loop
+    function animate() {
+      requestAnimationFrame(animate);
+      controls.update();
+      renderer.render(scene, camera);
+    }
+    animate();
+
+      // Dynamic resize
+      function resizeCanvas() {
+        const mainView = document.getElementById('main-view');
+        const tabs = document.getElementById('tabs');
+        const width = mainView.clientWidth;
+        const height = mainView.clientHeight - tabs.clientHeight;
+        camera.aspect = width / height;
+        camera.updateProjectionMatrix();
+        renderer.setSize(width, height);
+      }
+      window.addEventListener('resize', resizeCanvas);
+      resizeCanvas(); // Initial resize
+
+    // Sensor data update (placeholder, fetch from Rust)
+    async function updateSensors() {
+      const data = await window.__TAURI__.invoke('get_sensor_data');
+      document.getElementById('temp').textContent = `${data.temp} °C`;
+      document.getElementById('speed').textContent = `${data.speed} m/s`;
+      document.getElementById('battery').textContent = `${data.battery} %`;
+      // Update battery gauge
+      const ctx = document.getElementById('battery-gauge').getContext('2d');
+      new Chart(ctx, {
+        type: 'bar',
+        data: { labels: ['Battery'], datasets: [{ label: 'Level', data: [data.battery], backgroundColor: 'rgba(74, 222, 128, 0.5)' }] },
+        options: { scales: { y: { beginAtZero: true, max: 100 } } }
+      });
+    }
+    setInterval(updateSensors, 1000);
+
+    // Painting functionality
+    let paintMode = false;
+    const raycaster = new THREE.Raycaster();
+    const mouse = new THREE.Vector2();
+    document.getElementById('point-cloud').addEventListener('mousedown', async (event) => {
+      if (!paintMode) return;
+      mouse.x = ((event.clientX - 300) / (window.innerWidth - 300)) * 2 - 1;
+      mouse.y = -((event.clientY - 40) / (window.innerHeight - 40)) * 2 + 1;
+      raycaster.setFromCamera(mouse, camera);
+      const intersects = raycaster.intersectObject(points);
+      if (intersects.length > 0) {
+        const hit = intersects[0].point;
+        const brushSize = parseFloat(document.getElementById('brush-size').value);
+        const indices = await window.__TAURI__.invoke('select_points', { x: hit.x, y: hit.y, z: hit.z, radius: brushSize });
+        const colors = geometry.attributes.color.array;
+        indices.forEach(i => { colors[i * 3] = 0; colors[i * 3 + 1] = 1; colors[i * 3 + 2] = 0; });
+        geometry.attributes.color.needsUpdate = true;
+      }
+    });
+
+    document.getElementById('paint-btn').addEventListener('click', () => {
+      paintMode = !paintMode;
+      document.getElementById('paint-btn').textContent = paintMode ? 'Exit Paint Mode' : 'Toggle Paint Mode';
+    });
+
+    document.getElementById('save-areas-btn').addEventListener('click', async () => {
+      await window.__TAURI__.invoke('save_marked_areas');
+      alert('Allowed areas sent to robot');
+    });
+
+    // Settings save
+    document.getElementById('save-settings').addEventListener('click', async () => {
+      const settings = {
+        udpPort: parseInt(document.getElementById('udp-port').value),
+        rtspUrl: document.getElementById('rtsp-url').value,
+        brushSize: parseFloat(document.getElementById('brush-size').value)
+      };
+      await window.__TAURI__.invoke('save_settings', settings);
+      alert('Settings saved');
+    });
+
+    // RTSP feed (placeholder, set src from GStreamer/WebRTC)
+    const rtspVideo = document.getElementById('rtsp-feed');
+    const cameraVideo = document.getElementById('camera-feed');
+    rtspVideo.src = 'http://localhost:8080/stream'; // Adjust to WebRTC endpoint
+    cameraVideo.src = 'http://localhost:8080/stream';
+  </script>
+</body>
+
+</html>

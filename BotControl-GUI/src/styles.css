@@ -1,0 +1,63 @@
+    :root {
+      margin: 0;
+      overflow: hidden;
+
+      --dark-gray:#202020;
+      --light-gray:#272727;
+      --light-black:#111111;
+    }
+
+    #app {
+      height: 100vh;
+      display: flex;
+    }
+
+    #sidebar {
+      width: 300px;
+      background: #202020;
+      color: white;
+      padding: 1rem;
+      overflow-y: auto;
+    }
+
+    #main-view {
+      flex-grow: 1;
+      display: flex;
+      flex-direction: column;
+    }
+
+    #tabs {
+      display: flex;
+      background: var(--dark-gray);
+    }
+
+    .tab {
+      padding: 1rem;
+      cursor: pointer;
+      color: white;
+    }
+
+    .tab.active {
+      background: var(--light-gray);
+    }
+
+    .tab-content {
+      background: var(--light-gray);
+      flex-grow: 1;
+      display: none;
+    }
+
+    .tab-content.active {
+      display: block;
+    }
+
+    #point-cloud {
+      background: var(--light-black);
+      width: 100% !important;
+      height: 100% !important;
+    }
+
+    #camera-feed {
+      width: 100%;
+      height: auto;
+    }
