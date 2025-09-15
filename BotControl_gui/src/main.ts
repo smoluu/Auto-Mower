@@ -1,11 +1,12 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { invoke } from "@tauri-apps/api/core";
+import Stats from "stats.js";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Chart, ChartConfiguration, registerables } from "chart.js";
 
 // Register Chart.js components
 Chart.register(...registerables);
-
 
 // Interfaces for Tauri invoke responses
 interface SensorData {
@@ -34,45 +35,112 @@ tabs.forEach((tab) => {
     }
   });
 });
+tabs[0].addEventListener("visibilitychange", () => {
+  console.log("asdasd");
+});
 
-// Three.js setup for point cloud
+// Three.js setup
 const scene = new THREE.Scene();
-const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+const camera = new THREE.PerspectiveCamera(85, window.innerWidth / window.innerHeight, 0.1, 1000);
 const canvas = document.getElementById("point-cloud") as HTMLCanvasElement;
 const renderer = new THREE.WebGLRenderer({ canvas });
+console.log(renderer.capabilities);
 renderer.setSize(window.innerWidth - 300, window.innerHeight - 40);
+
+// Camera setup
 const controls = new OrbitControls(camera, renderer.domElement);
-camera.position.z = 5;
+controls.enableDamping = true;
+controls.dampingFactor = 0.1;
+controls.rotateSpeed = 0.5;
+controls.panSpeed = 0.5;
+camera.position.y = 20;
+camera.position.z = -5;
+
+// Axis  & Grid helper
+const axesHelper = new THREE.AxesHelper();
+scene.add(axesHelper);
+scene.add(new THREE.GridHelper(100, 100));
+
+//  Stats setup
+const stats = new Stats();
+stats.showPanel(0); // 0: FPS, 1: MS, 2: MB
+document.body.appendChild(stats.dom);
+stats.dom.style.position = "absolute";
+stats.dom.style.top = (window.innerHeight - 50).toString() + "px";
+stats.dom.style.left = "0px";
 
 // Generate test point cloud
 interface PointCloudData {
   positions: Float32Array;
-  colors: Float32Array;
+  colorIndices: Uint8Array;
 }
+// Create 1D texture for color palette
+const colorPalette = new Uint8Array([
+  255,255,255,255,
+  255, 0, 0, 255,   // Red
+  0, 255, 0, 255,   // Green
+  0, 0, 255, 255,   // Blue
+  255, 255, 0, 255, // Yellow
+]);
 
-function generateTestPointCloud(pointCount: number = 100000): PointCloudData {
+const paletteTexture = new THREE.DataTexture(colorPalette, 5, 1, THREE.RGBAFormat);
+paletteTexture.needsUpdate = true;
+
+
+function generateTestPointCloud(pointCount: number): PointCloudData {
   const positions = new Float32Array(pointCount * 3);
-  const colors = new Float32Array(pointCount * 3);
+  const colorIndices = new Uint8Array(pointCount); // Single float per point
   for (let i = 0; i < pointCount; i++) {
-    positions[i * 3] = (Math.random() - 0.5) * 10; // x: [-5, 5]
-    positions[i * 3 + 1] = (Math.random() - 0.5) * 10; // y: [-5, 5]
-    positions[i * 3 + 2] = (Math.random() - 0.5) * 10; // z: [-5, 5]
-    colors[i * 3] = Math.random(); // r: [0, 1]
-    colors[i * 3 + 1] = Math.random(); // g: [0, 1]
-    colors[i * 3 + 2] = Math.random(); // b: [0, 1]
-
+    positions[i * 3] = (Math.random() - 0.5) * 100; // x: [-5, 5]
+    positions[i * 3 + 1] = (Math.random() - 0.5) * 5; // y: [-5, 5]
+    positions[i * 3 + 2] = (Math.random() - 0.5) * 100; // z: [-5, 5]
+    colorIndices[i] = Math.floor(Math.random() * colorPalette.length);
   }
-  return { positions, colors };
+  return { positions, colorIndices };
 }
 
 // Load point cloud
 let points: THREE.Points;
 function loadPointCloud(): void {
-  const cloud = generateTestPointCloud();
+  // 5mil points at 35 fps on thinkpad t480
+  const cloud = generateTestPointCloud(5000000);
   const geometry = new THREE.BufferGeometry();
   geometry.setAttribute("position", new THREE.Float32BufferAttribute(cloud.positions, 3));
-  geometry.setAttribute("color", new THREE.Float32BufferAttribute(cloud.colors, 3));
-  const material = new THREE.PointsMaterial({ size: 0.05, vertexColors: true });
+  geometry.setAttribute("colorIndex", new THREE.Uint8BufferAttribute(cloud.colorIndices, 1));
+
+  // Custom shader material for smooth, circular points with color palette
+  const material = new THREE.ShaderMaterial({
+    uniforms: {
+      pointSize: { value: 0.1 },
+      palette: { value: paletteTexture },
+    },
+    vertexShader: `
+      precision highp float;
+      attribute float colorIndex;
+      varying float vColorIndex;
+      uniform float pointSize;
+      void main() {
+        vColorIndex = colorIndex / 4.0; // Normalize based on palette size (0 to 4)
+        vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+        gl_PointSize = pointSize * (1000.0 / -mvPosition.z); // Adjusted scaling factor
+        gl_Position = projectionMatrix * mvPosition;
+      }
+    `,
+    fragmentShader: `
+      precision highp float;
+      uniform sampler2D palette;
+      varying float vColorIndex;
+      void main() {
+        vec2 coord = gl_PointCoord - vec2(0.5);
+        float dist = length(coord);
+        if (dist > 0.5) discard; // Circular points
+        gl_FragColor = texture2D(palette, vec2(vColorIndex, 0.5));
+        gl_FragColor.a = 1.0; // Ensure full opacity for non-discarded pixels
+      }
+    `,
+    transparent: false, // Enable transparency for proper rendering
+  });
+
   points = new THREE.Points(geometry, material);
   scene.add(points);
 }
@@ -81,8 +149,17 @@ loadPointCloud();
 // Animation loop
 function animate(): void {
   requestAnimationFrame(animate);
-  controls.update();
-  renderer.render(scene, camera);
+  if (tabs[0].classList.contains("active")) {
+    if (renderer.info.render.frame % 60 == 0) {
+      console.log(renderer.info.render);
+      console.log(renderer.info.memory);
+      console.log("Half-float supported:", !!renderer.getContext().getExtension("OES_texture_half_float"));
+    }
+    stats.begin();
+    controls.update();
+    renderer.render(scene, camera);
+    stats.end();
+  }
 }
 animate();
 
@@ -95,8 +172,9 @@ function resizeCanvas(): void {
   camera.aspect = width / height;
   camera.updateProjectionMatrix();
   renderer.setSize(width, height);
+  stats.dom.style.top = (mainView.clientHeight - 50).toString() + "px";
 }
-window.addEventListener("resize", resizeCanvas);
+
 resizeCanvas(); // Initial resize
 
 // Sensor data update
@@ -120,7 +198,7 @@ async function updateSensors(): Promise<void> {
     options: { scales: { y: { beginAtZero: true, max: 100 } } },
   } as ChartConfiguration);
 }
-setInterval(updateSensors, 1000);
+//setInterval(updateSensors, 1000);
 
 // Painting functionality
 let paintMode: boolean = false;
@@ -160,16 +238,16 @@ saveAreasBtn.addEventListener("click", async () => {
 });
 
 // Settings save
-// const saveSettingsBtn = document.getElementById("save-settings") as HTMLButtonElement;
-// saveSettingsBtn.addEventListener("click", async () => {
-//   const settings: Settings = {
-//     udpPort: parseInt((document.getElementById("udp-port") as HTMLInputElement).value),
-//     rtspUrl: (document.getElementById("rtsp-url") as HTMLInputElement).value,
-//     brushSize: parseFloat((document.getElementById("brush-size") as HTMLInputElement).value),
-//   };
-//   await invoke("save_settings", settings);
-//   alert("Settings saved");
-// });
+const saveSettingsBtn = document.getElementById("save-settings") as HTMLButtonElement;
+saveSettingsBtn.addEventListener("click", async () => {
+  const settings: Settings = {
+    udpPort: parseInt((document.getElementById("udp-port") as HTMLInputElement).value),
+    rtspUrl: (document.getElementById("rtsp-url") as HTMLInputElement).value,
+    brushSize: parseFloat((document.getElementById("brush-size") as HTMLInputElement).value),
+  };
+  //await invoke("save_settings", settings);
+  alert("Settings saved");
+});
 
 // RTSP feed (placeholder)
 const rtspVideo = document.getElementById("rtsp-feed") as HTMLVideoElement;
