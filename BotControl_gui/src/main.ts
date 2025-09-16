@@ -4,9 +4,17 @@ import { invoke } from "@tauri-apps/api/core";
 import Stats from "stats.js";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Chart, ChartConfiguration, registerables } from "chart.js";
+import { ThreeMFLoader } from "three/examples/jsm/Addons.js";
+import { float, int } from "three/tsl";
 
 // Register Chart.js components
 Chart.register(...registerables);
+
+let isFocus = true;
+let stopRender = false;
+let clock = new THREE.Clock();
+let targetFPS = 30;
+let delta = 0;
 
 // Interfaces for Tauri invoke responses
 interface SensorData {
@@ -35,17 +43,14 @@ tabs.forEach((tab) => {
     }
   });
 });
-tabs[0].addEventListener("visibilitychange", () => {
-  console.log("asdasd");
-});
 
 // Three.js setup
 const scene = new THREE.Scene();
-const camera = new THREE.PerspectiveCamera(85, window.innerWidth / window.innerHeight, 0.1, 1000);
+const camera = new THREE.PerspectiveCamera(90, window.innerWidth / window.innerHeight, 0.1, 1000);
 const canvas = document.getElementById("point-cloud") as HTMLCanvasElement;
 const renderer = new THREE.WebGLRenderer({ canvas });
 console.log(renderer.capabilities);
-renderer.setSize(window.innerWidth - 300, window.innerHeight - 40);
+renderer.setSize(1080, 720);
 
 // Camera setup
 const controls = new OrbitControls(camera, renderer.domElement);
@@ -57,7 +62,7 @@ camera.position.y = 20;
 camera.position.z = -5;
 
 // Axis  & Grid helper
-const axesHelper = new THREE.AxesHelper();
+const axesHelper = new THREE.AxesHelper(999);
 scene.add(axesHelper);
 scene.add(new THREE.GridHelper(100, 100));
 
@@ -86,7 +91,6 @@ const colorPalette = new Uint8Array([
 const paletteTexture = new THREE.DataTexture(colorPalette, 5, 1, THREE.RGBAFormat);
 paletteTexture.needsUpdate = true;
 
-
 function generateTestPointCloud(pointCount: number): PointCloudData {
   const positions = new Float32Array(pointCount * 3);
   const colorIndices = new Uint8Array(pointCount); // Single float per point
@@ -94,7 +98,7 @@ function generateTestPointCloud(pointCount: number): PointCloudData {
     positions[i * 3] = (Math.random() - 0.5) * 100; // x: [-5, 5]
     positions[i * 3 + 1] = (Math.random() - 0.5) * 5; // y: [-5, 5]
     positions[i * 3 + 2] = (Math.random() - 0.5) * 100; // z: [-5, 5]
-    colorIndices[i] = Math.floor(Math.random() * colorPalette.length);
+    colorIndices[i] = 0; //Math.random() * colorPalette.length;
   }
   return { positions, colorIndices };
 }
@@ -103,15 +107,16 @@ function generateTestPointCloud(pointCount: number): PointCloudData {
 let points: THREE.Points;
 function loadPointCloud(): void {
   // 5mil points at 35 fps on thinkpad t480
-  const cloud = generateTestPointCloud(5000000);
+  const cloud = generateTestPointCloud(1000000);
   const geometry = new THREE.BufferGeometry();
   geometry.setAttribute("position", new THREE.Float32BufferAttribute(cloud.positions, 3));
   geometry.setAttribute("colorIndex", new THREE.Uint8BufferAttribute(cloud.colorIndices, 1));
+  geometry.computeBoundingBox(); // Needed for raycast
 
   // Custom shader material for smooth, circular points with color palette
   const material = new THREE.ShaderMaterial({
     uniforms: {
-      pointSize: { value: 0.1 },
+      pointSize: { value: 0.05 },
       palette: { value: paletteTexture },
     },
     vertexShader: `
@@ -146,22 +151,34 @@ function loadPointCloud(): void {
 }
 loadPointCloud();
 
-// Animation loop
-function animate(): void {
-  requestAnimationFrame(animate);
-  if (tabs[0].classList.contains("active")) {
-    if (renderer.info.render.frame % 60 == 0) {
-      console.log(renderer.info.render);
-      console.log(renderer.info.memory);
-      console.log("Half-float supported:", !!renderer.getContext().getExtension("OES_texture_half_float"));
-    }
+// App not in focus
+getCurrentWindow().listen("tauri://blur", () => {
+  isFocus = false;
+  targetFPS = 5;
+});
+// App in focus
+getCurrentWindow().listen("tauri://focus", () => {
+  isFocus = true;
+  targetFPS = 30;
+});
+
+// Update loop
+function Update(): void {
+  requestAnimationFrame(Update);
+  delta += clock.getDelta();
+  if (!stopRender && delta > 1 / targetFPS && tabs[0].classList.contains("active")) {
     stats.begin();
     controls.update();
     renderer.render(scene, camera);
+    delta = (delta % 1) / targetFPS;
     stats.end();
+    if (renderer.info.render.frame % targetFPS == 0) {
+      console.log(renderer.info.render);
+      console.log(renderer.info.memory);
+    }
   }
 }
-animate();
+Update();
 
 // Dynamic resize
 function resizeCanvas(): void {
@@ -198,36 +215,55 @@ async function updateSensors(): Promise<void> {
     options: { scales: { y: { beginAtZero: true, max: 100 } } },
   } as ChartConfiguration);
 }
-//setInterval(updateSensors, 1000);
 
 // Painting functionality
 let paintMode: boolean = false;
 const raycaster = new THREE.Raycaster();
+raycaster.params.Points.threshold = 1;
 const mouse = new THREE.Vector2();
 canvas.addEventListener("mousedown", async (event: MouseEvent) => {
   if (!paintMode) return;
-  mouse.x = ((event.clientX - 300) / (window.innerWidth - 300)) * 2 - 1;
-  mouse.y = -((event.clientY - 40) / (window.innerHeight - 40)) * 2 + 1;
+  let time = performance.now();
+  const rect = canvas.getBoundingClientRect();
+  mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+  mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
   raycaster.setFromCamera(mouse, camera);
-  const intersects = raycaster.intersectObject(points);
+
+  // Add cylinder for debug
+  const material = new THREE.MeshBasicMaterial({
+    color: 0x00ff00, // Green color
+    transparent: true,
+    opacity: 0.5,
+    depthWrite: false, // Disable depth writing to make it appear transparent
+  });
+  const geometry = new THREE.CylinderGeometry(0.1, 0.1, 100, 16);
+
+  const cylinder = new THREE.Mesh(geometry, material);
+  let hitPoint = raycaster.ray.origin.clone().add(raycaster.ray.direction.clone().multiplyScalar(110));
+  const direction = hitPoint.clone().sub(camera.position).normalize();
+  const up = new THREE.Vector3(0, 1, 0);
+  const quaternion = new THREE.Quaternion().setFromUnitVectors(up, direction);
+  cylinder.quaternion.copy(quaternion);
+  cylinder.position.lerpVectors(camera.position, hitPoint, 0.5);
+  scene.add(cylinder);
+  setTimeout(() => {
+    scene.remove(cylinder);
+    geometry.dispose();
+    material.dispose();
+  }, 10000);
+
+  const intersects = raycaster.intersectObject(points, false);
   if (intersects.length > 0) {
-    const hit = intersects[0].point;
-    const brushSize = parseFloat((document.getElementById("brush-size") as HTMLInputElement).value);
-    const indices = await invoke<number[]>("select_points", { x: hit.x, y: hit.y, z: hit.z, radius: brushSize });
-    const geometry = points.geometry as THREE.BufferGeometry;
-    const colors = geometry.attributes.color.array as Float32Array;
-    indices.forEach((i) => {
-      colors[i * 3] = 0; // r
-      colors[i * 3 + 1] = 1; // g
-      colors[i * 3 + 2] = 0; // b
-    });
-    geometry.attributes.color.needsUpdate = true;
+    const hit = intersects[0];
+    console.log(hit);
   }
+  console.log("Raycast took: ", performance.now() - time);
 });
 
 const paintBtn = document.getElementById("paint-btn") as HTMLButtonElement;
 paintBtn.addEventListener("click", () => {
   paintMode = !paintMode;
+  controls.enableRotate = !paintMode
   paintBtn.textContent = paintMode ? "Exit Paint Mode" : "Toggle Paint Mode";
 });
 
@@ -235,6 +271,13 @@ const saveAreasBtn = document.getElementById("save-areas-btn") as HTMLButtonElem
 saveAreasBtn.addEventListener("click", async () => {
   await invoke("save_marked_areas");
   alert("Allowed areas sent to robot");
+});
+// Keyboard mappings
+window.addEventListener("keypress", (e) => {
+  switch (e.key) {
+    case "p":
+      stopRender = !stopRender;
+  }
 });
 
 // Settings save
