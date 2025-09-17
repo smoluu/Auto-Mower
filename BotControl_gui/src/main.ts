@@ -4,8 +4,7 @@ import { invoke } from "@tauri-apps/api/core";
 import Stats from "stats.js";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Chart, ChartConfiguration, registerables } from "chart.js";
-import { ThreeMFLoader } from "three/examples/jsm/Addons.js";
-import { float, int } from "three/tsl";
+import { PointCloud } from "./PointCloud";
 
 // Register Chart.js components
 Chart.register(...registerables);
@@ -13,8 +12,10 @@ Chart.register(...registerables);
 let isFocus = true;
 let stopRender = false;
 let clock = new THREE.Clock();
-let targetFPS = 30;
-let delta = 0;
+const targetFPS  = 120;
+const blurTargetFps = 15; // Used to limit renderer fps when app is not in focus
+let rendererTargetFps = targetFPS; // Used to limit renderer frames per second
+let delta = 0; // Renderer frame time
 
 // Interfaces for Tauri invoke responses
 interface SensorData {
@@ -64,7 +65,7 @@ camera.position.z = -5;
 // Axis  & Grid helper
 const axesHelper = new THREE.AxesHelper(999);
 scene.add(axesHelper);
-scene.add(new THREE.GridHelper(100, 100));
+scene.add(new THREE.GridHelper(999 , 999));
 
 //  Stats setup
 const stats = new Stats();
@@ -74,108 +75,43 @@ stats.dom.style.position = "absolute";
 stats.dom.style.top = (window.innerHeight - 50).toString() + "px";
 stats.dom.style.left = "0px";
 
-// Generate test point cloud
-interface PointCloudData {
-  positions: Float32Array;
-  colorIndices: Uint8Array;
-}
-// Create 1D texture for color palette
-const colorPalette = new Uint8Array([
-  255,255,255,255,
-  255, 0, 0, 255,   // Red
-  0, 255, 0, 255,   // Green
-  0, 0, 255, 255,   // Blue
-  255, 255, 0, 255, // Yellow
-]);
-
-const paletteTexture = new THREE.DataTexture(colorPalette, 5, 1, THREE.RGBAFormat);
-paletteTexture.needsUpdate = true;
-
-function generateTestPointCloud(pointCount: number): PointCloudData {
-  const positions = new Float32Array(pointCount * 3);
-  const colorIndices = new Uint8Array(pointCount); // Single float per point
-  for (let i = 0; i < pointCount; i++) {
-    positions[i * 3] = (Math.random() - 0.5) * 100; // x: [-5, 5]
-    positions[i * 3 + 1] = (Math.random() - 0.5) * 5; // y: [-5, 5]
-    positions[i * 3 + 2] = (Math.random() - 0.5) * 100; // z: [-5, 5]
-    colorIndices[i] = 0; //Math.random() * colorPalette.length;
-  }
-  return { positions, colorIndices };
-}
 
 // Load point cloud
-let points: THREE.Points;
-function loadPointCloud(): void {
-  // 5mil points at 35 fps on thinkpad t480
-  const cloud = generateTestPointCloud(1000000);
-  const geometry = new THREE.BufferGeometry();
-  geometry.setAttribute("position", new THREE.Float32BufferAttribute(cloud.positions, 3));
-  geometry.setAttribute("colorIndex", new THREE.Uint8BufferAttribute(cloud.colorIndices, 1));
-  geometry.computeBoundingBox(); // Needed for raycast
-
-  // Custom shader material for smooth, circular points with color palette
-  const material = new THREE.ShaderMaterial({
-    uniforms: {
-      pointSize: { value: 0.05 },
-      palette: { value: paletteTexture },
-    },
-    vertexShader: `
-      precision highp float;
-      attribute float colorIndex;
-      varying float vColorIndex;
-      uniform float pointSize;
-      void main() {
-        vColorIndex = colorIndex / 4.0; // Normalize based on palette size (0 to 4)
-        vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
-        gl_PointSize = pointSize * (1000.0 / -mvPosition.z); // Adjusted scaling factor
-        gl_Position = projectionMatrix * mvPosition;
-      }
-    `,
-    fragmentShader: `
-      precision highp float;
-      uniform sampler2D palette;
-      varying float vColorIndex;
-      void main() {
-        vec2 coord = gl_PointCoord - vec2(0.5);
-        float dist = length(coord);
-        if (dist > 0.5) discard; // Circular points
-        gl_FragColor = texture2D(palette, vec2(vColorIndex, 0.5));
-        gl_FragColor.a = 1.0; // Ensure full opacity for non-discarded pixels
-      }
-    `,
-    transparent: false, // Enable transparency for proper rendering
-  });
-
-  points = new THREE.Points(geometry, material);
-  scene.add(points);
-}
-loadPointCloud();
+const pointCloud = new PointCloud();
+scene.add(pointCloud.points);
+pointCloud.debugWorker.postMessage({ pointCount: 1_000_000 });
 
 // App not in focus
 getCurrentWindow().listen("tauri://blur", () => {
   isFocus = false;
-  targetFPS = 5;
+  rendererTargetFps = blurTargetFps;
 });
 // App in focus
 getCurrentWindow().listen("tauri://focus", () => {
   isFocus = true;
-  targetFPS = 30;
+  rendererTargetFps = targetFPS;
 });
 
-// Update loop
-function Update(): void {
+function Update() {
   requestAnimationFrame(Update);
+
   delta += clock.getDelta();
-  if (!stopRender && delta > 1 / targetFPS && tabs[0].classList.contains("active")) {
-    stats.begin();
-    controls.update();
-    renderer.render(scene, camera);
-    delta = (delta % 1) / targetFPS;
-    stats.end();
-    if (renderer.info.render.frame % targetFPS == 0) {
-      console.log(renderer.info.render);
-      console.log(renderer.info.memory);
+  const interval = 1 / targetFPS;
+
+  while (delta >= interval) {
+    if (tabs[0]?.classList.contains("active")) {
+      controls.update();
+      stats.begin();
+      renderer.render(scene, camera);
+      stats.end();
+
+      if (renderer.info.render.frame % rendererTargetFps === 0) {
+        console.log(renderer.info.render);
+        console.log(renderer.info.memory);
+      }
     }
+
+    delta -= interval; // keep leftover
   }
 }
 Update();
@@ -222,6 +158,9 @@ const raycaster = new THREE.Raycaster();
 raycaster.params.Points.threshold = 1;
 const mouse = new THREE.Vector2();
 canvas.addEventListener("mousedown", async (event: MouseEvent) => {
+
+  console.log(pointCloud)
+
   if (!paintMode) return;
   let time = performance.now();
   const rect = canvas.getBoundingClientRect();
@@ -252,7 +191,7 @@ canvas.addEventListener("mousedown", async (event: MouseEvent) => {
     material.dispose();
   }, 10000);
 
-  const intersects = raycaster.intersectObject(points, false);
+  const intersects = raycaster.intersectObject(pointCloud.points, false);
   if (intersects.length > 0) {
     const hit = intersects[0];
     console.log(hit);
@@ -277,6 +216,9 @@ window.addEventListener("keypress", (e) => {
   switch (e.key) {
     case "p":
       stopRender = !stopRender;
+    case "d":
+    pointCloud.debugWorker.postMessage({ pointCount: 10_000 });
+
   }
 });
 
