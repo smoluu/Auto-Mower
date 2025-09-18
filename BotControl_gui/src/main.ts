@@ -5,7 +5,7 @@ import Stats from "stats.js";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Chart, ChartConfiguration, registerables } from "chart.js";
 import { PointCloud } from "./PointCloud";
-
+import { Toast } from "./Toast";
 // Register Chart.js components
 Chart.register(...registerables);
 
@@ -24,7 +24,6 @@ enum CanvasTool {
   Select = "select",
 }
 let canvasTool: CanvasTool = CanvasTool.None;
-
 // Interfaces for Tauri invoke responses
 interface SensorData {
   temp: number;
@@ -61,10 +60,10 @@ tools.forEach((tool) => {
     let active = tool.classList.contains("active");
     tools.forEach((t) => {
       t.classList.remove("active");
-    })
+    });
     let toolType = tool.dataset.tool as CanvasTool;
     if (active) {
-      toolType = CanvasTool.None
+      toolType = CanvasTool.None;
     }
     if (tool.id == "pointCloud-tool" && !active) {
       console.log(tool);
@@ -79,9 +78,10 @@ tools.forEach((tool) => {
 
     // Activate selected tool
     canvasTool = toolType;
-    console.log(canvasTool)
+    console.log(canvasTool);
     switch (canvasTool) {
-      case CanvasTool.None: break;
+      case CanvasTool.None:
+        break;
       case CanvasTool.Paint: {
         controls.enableRotate = false;
         break;
@@ -104,8 +104,8 @@ controls.enableDamping = true;
 controls.dampingFactor = 0.1;
 controls.rotateSpeed = 0.5;
 controls.panSpeed = 0.5;
-camera.position.y = 20;
-camera.position.z = -5;
+camera.position.y = 100;
+camera.position.z = 0;
 
 // Axis  & Grid helper
 const axesHelper = new THREE.AxesHelper(999);
@@ -226,15 +226,15 @@ raycaster.params.Points.threshold = 1;
 const mouse = new THREE.Vector2();
 canvas.addEventListener("mousedown", async (event: MouseEvent) => {
   switch (canvasTool) {
-    case CanvasTool.None: break;
+    case CanvasTool.None:
+      break;
     case CanvasTool.Paint: {
-
       let time = performance.now();
       const rect = canvas.getBoundingClientRect();
       mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
       mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
       raycaster.setFromCamera(mouse, camera);
-    
+
       // Add cylinder for debug
       const material = new THREE.MeshBasicMaterial({
         color: 0x00ff00, // Green color
@@ -243,7 +243,7 @@ canvas.addEventListener("mousedown", async (event: MouseEvent) => {
         depthWrite: false, // Disable depth writing to make it appear transparent
       });
       const geometry = new THREE.CylinderGeometry(0.1, 0.1, 100, 16);
-    
+
       const cylinder = new THREE.Mesh(geometry, material);
       let hitPoint = raycaster.ray.origin.clone().add(raycaster.ray.direction.clone().multiplyScalar(110));
       const direction = hitPoint.clone().sub(camera.position).normalize();
@@ -257,7 +257,7 @@ canvas.addEventListener("mousedown", async (event: MouseEvent) => {
         geometry.dispose();
         material.dispose();
       }, 10000);
-    
+
       const intersects = raycaster.intersectObject(pointCloud.points, false);
       if (intersects.length > 0) {
         const hit = intersects[0];
@@ -265,7 +265,6 @@ canvas.addEventListener("mousedown", async (event: MouseEvent) => {
       }
       console.log("Raycast took: ", performance.now() - time);
     }
-
   }
 });
 
@@ -300,3 +299,8 @@ const rtspVideo = document.getElementById("rtsp-feed") as HTMLVideoElement;
 const cameraVideo = document.getElementById("camera-feed") as HTMLVideoElement;
 rtspVideo.src = "http://localhost:8080/stream"; // Adjust to WebRTC endpoint
 cameraVideo.src = "http://localhost:8080/stream";
+
+const deviceConnectButton = document.querySelector("#device-connect-btn");
+deviceConnectButton?.addEventListener("click", async () => {
+  await invoke("connect_udp")
+});

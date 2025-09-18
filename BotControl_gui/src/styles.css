@@ -88,6 +88,18 @@
   background-color: var(--red);
   border-radius: 50%;
 }
+.button-light {
+  background-color: var(--light-gray);
+  padding: 10px 20px;
+  border-radius: 10px;
+  border: 1px;
+}
+.button-light:hover {
+  background-color: var(--light-black);
+}
+.button-light:active {
+  transform: translateY(2px);
+}
 
 input {
   background-color: var(--lighter-gray);
