@@ -40,54 +40,57 @@
       <video id="rtsp-feed" autoplay class="w-full rounded" controls></video>
     </div>
 
-    <!-- Main View with Tabs -->
-    <div id="main-view">
-      <div id="tabs">
-        <div class="tab active" data-tab="point-cloud-tab">Point Cloud</div>
-        <div class="tab" data-tab="camera-tab">Camera</div>
-        <div class="tab" data-tab="settings-tab">Settings</div>
-      </div>
-      <div id="point-cloud-tab" class="tab-content active">
-        <canvas id="point-cloud"></canvas>
-        <div class="absolute top-2 right-2 flex gap-2">
-          <button id="paint-btn" class="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700">Toggle Paint
-            Mode</button>
-          <button id="save-areas-btn" class="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700">Save
-            Areas</button>
-        </div>
-      </div>
-      <div id="camera-tab" class="tab-content p-4">
-        <video id="camera-feed" autoplay class="w-full rounded" controls></video>
-      </div>
-      <div id="settings-tab" class="tab-content p-4 text-white">
-        <h2 class="text-xl font-bold mb-4">Device:</h2>
-        <form id="settings-form" class="space-y-4">
-          <div class="ml-5">
-            <label class="block text-sm">IP:</label>
-            <input type="text" id="device-ip" value="127.0.0.1" class="w-full p-2  rounded text-white" minlength="7"
-              maxlength="15" size="15" pattern="^(?>(\d|[1-9]\d{2}|1\d\d|2[0-4]\d|25[0-5])\.){3}(?1)$">
-          </div>
-          <div class="ml-5">
-            <label class="block text-sm">Port:</label>
-            <input type="number" id="device-port" value="6969" class="w-full p-2 rounded text-white" min="1" max="65535"
-              value="12345" pattern="[0-9]{1,5}" required>
-          </div>
-          <h2 class="text-xl font-bold mb-4">Camera:</h2>
+<div id="main-view" class="flex flex-col flex-grow min-h-0">
+  <!-- Tabs at the top -->
+  <div id="tabs" class="flex bg-gray-800 flex-shrink-0">
+    <div class="tab active" data-tab="point-cloud-tab">Point Cloud</div>
+    <div class="tab" data-tab="camera-tab">Camera</div>
+    <div class="tab" data-tab="settings-tab">Settings</div>
+  </div>
 
-          <div class="ml-5">
-            <label class="block text-sm">IP:</label>
-            <input type="text" id="rtsp-url" value="rtsp://robot_ip:554/stream" class="w-full p-2  rounded text-white">
-          </div>
-          <div class="ml-5">
-            <label class="block text-sm">Brush Size:</label>
-            <input type="number" id="brush-size" value="0.5" step="0.1" class="w-full p-2  rounded text-white">
-          </div>
-          <button type="button" id="save-settings"
-            class="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700">Save
-            Settings</button>
-        </form>
+  <!-- Container for all tab contents -->
+  <div id="tab-contents" class="flex flex-col flex-grow min-h-0 overflow-hidden">
+    <div id="point-cloud-tab" class="tab-content active flex-col min-h-0">
+      <div id="tools-tab-container" class="flex tab-tools gap-2">
+        <div id="pointCloud-tool" data-tool="paint" class="tool-btn">Tool 1</div>
+        <div id="pointCloud-tool" data-tool="erase" class="tool-btn">Tool 2</div>
+        <div id="tools-tab-save-btn" data-tool="save" class="tool-btn ml-auto">Save</div>
       </div>
+      <canvas id="point-cloud" class="flex-1 w-full"></canvas>
     </div>
+
+    <div id="camera-tab" class="tab-content  flex-col p-4 min-h-0">
+      <video id="camera-feed" autoplay class=" w-full rounded" controls></video>
+    </div>
+
+    <div id="settings-tab" class="tab-content  flex-col p-4 min-h-0 text-white overflow-auto">
+      <h2 class="text-xl font-bold mb-4">Device:</h2>
+      <form id="settings-form" class="space-y-4 flex-1 overflow-auto">
+        <div class="ml-5">
+          <label class="block text-sm">IP:</label>
+          <input type="text" id="device-ip" value="127.0.0.1" class="w-full p-2 rounded text-white">
+        </div>
+        <div class="ml-5">
+          <label class="block text-sm">Port:</label>
+          <input type="number" id="device-port" value="6969" class="w-full p-2 rounded text-white" min="1" max="65535">
+        </div>
+        <h2 class="text-xl font-bold mb-4">Camera:</h2>
+        <div class="ml-5">
+          <label class="block text-sm">IP:</label>
+          <input type="text" id="rtsp-url" value="rtsp://robot_ip:554/stream" class="w-full p-2 rounded text-white">
+        </div>
+        <div class="ml-5">
+          <label class="block text-sm">Brush Size:</label>
+          <input type="number" id="brush-size" value="0.5" step="0.1" class="w-full p-2 rounded text-white">
+        </div>
+        <button type="button" id="save-settings" class="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700">
+          Save Settings
+        </button>
+      </form>
+    </div>
+  </div>
+</div>
+
   </div>
   <script type="module" src="./main.ts"> </script>
 

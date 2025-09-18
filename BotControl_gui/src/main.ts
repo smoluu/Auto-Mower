@@ -12,10 +12,18 @@ Chart.register(...registerables);
 let isFocus = true;
 let stopRender = false;
 let clock = new THREE.Clock();
-const targetFPS  = 120;
+const targetFPS = 120;
 const blurTargetFps = 15; // Used to limit renderer fps when app is not in focus
 let rendererTargetFps = targetFPS; // Used to limit renderer frames per second
 let delta = 0; // Renderer frame time
+
+enum CanvasTool {
+  None = "none",
+  Paint = "paint",
+  Erase = "erase",
+  Select = "select",
+}
+let canvasTool: CanvasTool = CanvasTool.None;
 
 // Interfaces for Tauri invoke responses
 interface SensorData {
@@ -42,6 +50,43 @@ tabs.forEach((tab) => {
     if (tabContent) {
       tabContent.classList.add("active");
     }
+    resizeCanvas();
+  });
+});
+
+// Tool switching
+const tools = document.querySelectorAll<HTMLDivElement>(".tool-btn");
+tools.forEach((tool) => {
+  tool.addEventListener("click", () => {
+    let active = tool.classList.contains("active");
+    tools.forEach((t) => {
+      t.classList.remove("active");
+    })
+    let toolType = tool.dataset.tool as CanvasTool;
+    if (active) {
+      toolType = CanvasTool.None
+    }
+    if (tool.id == "pointCloud-tool" && !active) {
+      console.log(tool);
+      tool.classList.add("active");
+    }
+    console.log(toolType);
+    if (!toolType) return;
+
+    // Disable all tools
+    // paint
+    controls.enableRotate = true;
+
+    // Activate selected tool
+    canvasTool = toolType;
+    console.log(canvasTool)
+    switch (canvasTool) {
+      case CanvasTool.None: break;
+      case CanvasTool.Paint: {
+        controls.enableRotate = false;
+        break;
+      }
+    }
   });
 });
 
@@ -65,7 +110,7 @@ camera.position.z = -5;
 // Axis  & Grid helper
 const axesHelper = new THREE.AxesHelper(999);
 scene.add(axesHelper);
-scene.add(new THREE.GridHelper(999 , 999));
+scene.add(new THREE.GridHelper(500, 500));
 
 //  Stats setup
 const stats = new Stats();
@@ -74,7 +119,6 @@ document.body.appendChild(stats.dom);
 stats.dom.style.position = "absolute";
 stats.dom.style.top = (window.innerHeight - 50).toString() + "px";
 stats.dom.style.left = "0px";
-
 
 // Load point cloud
 const pointCloud = new PointCloud();
@@ -92,13 +136,14 @@ getCurrentWindow().listen("tauri://focus", () => {
   rendererTargetFps = targetFPS;
 });
 
+// Render loop
 function Update() {
   requestAnimationFrame(Update);
 
   delta += clock.getDelta();
   const interval = 1 / targetFPS;
 
-  while (delta >= interval) {
+  while (delta >= interval && !stopRender) {
     if (tabs[0]?.classList.contains("active")) {
       controls.update();
       stats.begin();
@@ -120,15 +165,38 @@ Update();
 function resizeCanvas(): void {
   const mainView = document.getElementById("main-view") as HTMLDivElement;
   const tabs = document.getElementById("tabs") as HTMLDivElement;
-  const width = mainView.clientWidth;
-  const height = mainView.clientHeight - tabs.clientHeight;
-  camera.aspect = width / height;
+  const targetAspectRatio = 16 / 9;
+  const containerWidth = mainView.clientWidth;
+  const containerHeight = mainView.clientHeight - tabs.clientHeight;
+
+  // Option 1: fit by width
+  let widthByWidth = containerWidth;
+  let heightByWidth = Math.floor(widthByWidth / targetAspectRatio);
+
+  // Option 2: fit by height
+  let heightByHeight = containerHeight;
+  let widthByHeight = Math.floor(heightByHeight * targetAspectRatio);
+
+  let width: number;
+  let height: number;
+
+  if (heightByWidth <= containerHeight) {
+    // Fits within height → use width-limited option
+    width = widthByWidth;
+    height = heightByWidth;
+  } else {
+    // Otherwise use height-limited option
+    width = widthByHeight;
+    height = heightByHeight;
+  }
+  camera.aspect = targetAspectRatio;
   camera.updateProjectionMatrix();
   renderer.setSize(width, height);
+
   stats.dom.style.top = (mainView.clientHeight - 50).toString() + "px";
 }
-
 resizeCanvas(); // Initial resize
+window.addEventListener("resize", resizeCanvas);
 
 // Sensor data update
 async function updateSensors(): Promise<void> {
@@ -153,63 +221,57 @@ async function updateSensors(): Promise<void> {
 }
 
 // Painting functionality
-let paintMode: boolean = false;
 const raycaster = new THREE.Raycaster();
 raycaster.params.Points.threshold = 1;
 const mouse = new THREE.Vector2();
 canvas.addEventListener("mousedown", async (event: MouseEvent) => {
+  switch (canvasTool) {
+    case CanvasTool.None: break;
+    case CanvasTool.Paint: {
 
-  console.log(pointCloud)
+      let time = performance.now();
+      const rect = canvas.getBoundingClientRect();
+      mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+      mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+      raycaster.setFromCamera(mouse, camera);
+    
+      // Add cylinder for debug
+      const material = new THREE.MeshBasicMaterial({
+        color: 0x00ff00, // Green color
+        transparent: true,
+        opacity: 0.5,
+        depthWrite: false, // Disable depth writing to make it appear transparent
+      });
+      const geometry = new THREE.CylinderGeometry(0.1, 0.1, 100, 16);
+    
+      const cylinder = new THREE.Mesh(geometry, material);
+      let hitPoint = raycaster.ray.origin.clone().add(raycaster.ray.direction.clone().multiplyScalar(110));
+      const direction = hitPoint.clone().sub(camera.position).normalize();
+      const up = new THREE.Vector3(0, 1, 0);
+      const quaternion = new THREE.Quaternion().setFromUnitVectors(up, direction);
+      cylinder.quaternion.copy(quaternion);
+      cylinder.position.lerpVectors(camera.position, hitPoint, 0.5);
+      scene.add(cylinder);
+      setTimeout(() => {
+        scene.remove(cylinder);
+        geometry.dispose();
+        material.dispose();
+      }, 10000);
+    
+      const intersects = raycaster.intersectObject(pointCloud.points, false);
+      if (intersects.length > 0) {
+        const hit = intersects[0];
+        console.log(hit);
+      }
+      console.log("Raycast took: ", performance.now() - time);
+    }
 
-  if (!paintMode) return;
-  let time = performance.now();
-  const rect = canvas.getBoundingClientRect();
-  mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
-  mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
-  raycaster.setFromCamera(mouse, camera);
-
-  // Add cylinder for debug
-  const material = new THREE.MeshBasicMaterial({
-    color: 0x00ff00, // Green color
-    transparent: true,
-    opacity: 0.5,
-    depthWrite: false, // Disable depth writing to make it appear transparent
-  });
-  const geometry = new THREE.CylinderGeometry(0.1, 0.1, 100, 16);
-
-  const cylinder = new THREE.Mesh(geometry, material);
-  let hitPoint = raycaster.ray.origin.clone().add(raycaster.ray.direction.clone().multiplyScalar(110));
-  const direction = hitPoint.clone().sub(camera.position).normalize();
-  const up = new THREE.Vector3(0, 1, 0);
-  const quaternion = new THREE.Quaternion().setFromUnitVectors(up, direction);
-  cylinder.quaternion.copy(quaternion);
-  cylinder.position.lerpVectors(camera.position, hitPoint, 0.5);
-  scene.add(cylinder);
-  setTimeout(() => {
-    scene.remove(cylinder);
-    geometry.dispose();
-    material.dispose();
-  }, 10000);
-
-  const intersects = raycaster.intersectObject(pointCloud.points, false);
-  if (intersects.length > 0) {
-    const hit = intersects[0];
-    console.log(hit);
   }
-  console.log("Raycast took: ", performance.now() - time);
 });
 
-const paintBtn = document.getElementById("paint-btn") as HTMLButtonElement;
-paintBtn.addEventListener("click", () => {
-  paintMode = !paintMode;
-  controls.enableRotate = !paintMode
-  paintBtn.textContent = paintMode ? "Exit Paint Mode" : "Toggle Paint Mode";
-});
-
-const saveAreasBtn = document.getElementById("save-areas-btn") as HTMLButtonElement;
+const saveAreasBtn = document.getElementById("tools-tab-save-btn") as HTMLButtonElement;
 saveAreasBtn.addEventListener("click", async () => {
-  await invoke("save_marked_areas");
-  alert("Allowed areas sent to robot");
+  alert("Saved");
 });
 // Keyboard mappings
 window.addEventListener("keypress", (e) => {
@@ -217,8 +279,7 @@ window.addEventListener("keypress", (e) => {
     case "p":
       stopRender = !stopRender;
     case "d":
-    pointCloud.debugWorker.postMessage({ pointCount: 10_000 });
-
+      pointCloud.debugWorker.postMessage({ pointCount: 10_000 });
   }
 });
 
