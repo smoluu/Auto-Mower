@@ -6,6 +6,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Chart, ChartConfiguration, registerables } from "chart.js";
 import { PointCloud } from "./PointCloud";
 import { Toast } from "./Toast";
+import { listen } from "@tauri-apps/api/event";
 // Register Chart.js components
 Chart.register(...registerables);
 
@@ -302,5 +303,33 @@ cameraVideo.src = "http://localhost:8080/stream";
 
 const deviceConnectButton = document.querySelector("#device-connect-btn");
 deviceConnectButton?.addEventListener("click", async () => {
-  await invoke("connect_udp")
+  try {
+    let test = await invoke("connect_udp",{address: "10.66.66.5", port: 6969})
+    console.log("test", test)
+
+  } catch (e) {
+    console.log("Error connecting: ", e)
+  }
+});
+
+
+listen("state_connection_update", (e) => {
+  const connectionStatusDot = document.querySelector("#connectionStatusDot") as HTMLDivElement;
+  switch (e.payload) {
+    case "disconnected": {
+      connectionStatusDot.style.backgroundColor = "#a80000";
+      break;
+    }
+    case "connecting": {
+      connectionStatusDot.style.backgroundColor = "#ffff00";
+      break;
+    }
+    case "connected": {
+      connectionStatusDot.style.backgroundColor = "#00c40aff";
+      break;
+    }
+    default: {
+      console.error("state_connection_update failed:", e);
+    }
+  }
 });

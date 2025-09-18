@@ -2,5 +2,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
-    botcontrol_gui_lib::run()
+    botcontrol_gui_lib::run();
+
 }
