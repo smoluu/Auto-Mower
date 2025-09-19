@@ -1,0 +1,6 @@
+Voltage: Rated 12V
+Model: Type 755
+Shaft Diameter: 5mm
+Motor Type: Pure Copper Purpose Motor
+Noise Level: 3 decibels (dB) Bandwidth
+Heat Resistance: 105℃ Volatile Substance Emission

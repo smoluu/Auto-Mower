@@ -1,0 +1,16 @@
+Module introduction:
+
+This module is designed based on the principle of resistance voltage division, which can reduce the input voltage of terminal interface by 5 times. The analog input voltage of Arduin is 5V, so the input voltage of the voltage detection module should not be greater than 5V x5= 25V (if the 3.3V system is used, the input voltage should not be greater than 3.3Vx5=16.5V). Because the AVR chip used by Arduino is a 10-bit AD, the analog resolution of this module is 0.00489V (5V/1023). Therefore, the voltage detection module detects that the input voltage is 0.00489V×5=0.02445V.
+
+
+Parameters:
+
+Voltage input range: DC0-25V
+
+Voltage detection range: DC0.02445V-25V
+
+Voltage simulation resolution: 0.00489V
+
+DC input interface: the positive terminal is connected to VCC and the negative terminal is connected to GND
+
+Output interface: "+" connects to 5/3.3V, "-" connects to GND, and "s" connects to AD pins of Arduin
