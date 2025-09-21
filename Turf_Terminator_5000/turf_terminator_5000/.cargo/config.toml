@@ -16,6 +16,9 @@ ESP_IDF_TOOLS_INSTALL_DIR = { value = "global" } # add this line
 
 WIFI_SSID= "turf_terminator_5000"
 WIFI_PASSWORD = "12345678"
+OTA_SERVER_URL = "http://ota.turfterminator.smolander.dev"
+PROXY_USER = "santeri@smolander.dev"
+PROXY_PASSWORD = "nasty123"
 
 [toolchain]
 channel = "nightly"

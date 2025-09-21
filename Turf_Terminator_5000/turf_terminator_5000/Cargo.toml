@@ -24,11 +24,13 @@ experimental = ["esp-idf-svc/experimental"]
 
 [dependencies]
 log = "0.4"
-esp-idf-sys = { version = "0.36.1" }
+esp-idf-sys = { version = "0.36.1"}
 esp-idf-svc = "0.51"
 esp-idf-hal = "0.45.2"
 anyhow = "1.0"
+ureq = { version = "2.12.1", default-features = false, features = ["json"] }
 heapless = "0.9.1"
+base64 = "0.22.1"
 # --- Optional Embassy Integration ---
 # esp-idf-svc = { version = "0.51", features = ["critical-section", "embassy-time-driver", "embassy-sync"] }
 
@@ -48,6 +50,3 @@ heapless = "0.9.1"
 
 [build-dependencies]
 embuild = "0.33"
-
-[package.metadata]
-wifi = { ssid = "YOUR_SSID", password = "YOUR_PASSWORD" } # Replace with your credentials

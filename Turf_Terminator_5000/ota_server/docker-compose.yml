@@ -1,0 +1,16 @@
+networks:
+  custom:
+    external: true
+services:
+  ota:
+    build: .
+    container_name: ota-server
+    ports:
+      - "8080:8080"
+    volumes:
+      - ota_data:/app
+    restart: unless-stopped
+    networks:
+      - custom
+volumes:
+  ota_data:
