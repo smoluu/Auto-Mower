@@ -1,10 +1,11 @@
 use std::{ sync::{Arc, Mutex}, thread, time::Duration };
-use esp_idf_hal::{ prelude::Peripherals, units::Hertz };
+use esp_idf_hal::{ prelude::Peripherals, units::Hertz};
 use esp_idf_svc::{eventloop::EspSystemEventLoop, hal::*, nvs::EspDefaultNvsPartition, wifi::EspWifi};
 use esp_idf_hal::i2c::*;
 
 use log::{ self, info, Log };
 use esp_idf_sys::*;
+use ota::init_ota;
 
 use crate::{i2c::scan_i2c_bus, ota::start_ota_polling, wifi::wifi_connect};
 mod ota;
@@ -24,11 +25,17 @@ fn main() -> anyhow::Result<()> {
 
     // Bind the log crate to the ESP Logging facilities
     esp_idf_svc::log::EspLogger::initialize_default();
-
-    info!("Hello, world!");
-
-    let peripherals = Peripherals::take().unwrap();
     
+    // info!("Hello, world!");
+    // info!("TESTTESTTESTTESTTESTTESTTESTTESTTESTTESTTESTTESTTESTTESTTESTTESTTESTTEST");
+    // info!("TESTTESTTESTTESTTESTTESTTESTTESTTESTTESTTESTTESTTESTTESTTESTTESTTESTTEST");
+    // info!("TESTTESTTESTTESTTESTTESTTESTTESTTESTTESTTESTTESTTESTTESTTESTTESTTESTTEST");
+    // info!("TESTTESTTESTTESTTESTTESTTESTTESTTESTTESTTESTTESTTESTTESTTESTTESTTESTTEST");
+    // info!("TESTTESTTESTTESTTESTTESTTESTTESTTESTTESTTESTTESTTESTTESTTESTTESTTESTTEST");
+    
+    
+    let peripherals = Peripherals::take().unwrap();
+
     //  Wifi setup
     let sys_loop = EspSystemEventLoop::take().unwrap();
     let nvs = EspDefaultNvsPartition::take().ok();
@@ -44,12 +51,14 @@ fn main() -> anyhow::Result<()> {
     // Scan the whole i2c bus for devices
     scan_i2c_bus(&mut i2c, 0x03, 0x77,10);
 
+    // Check OTA partitions
+    info!("Init ota: {:?}", init_ota()?);
+
     // Start OTA firmware update polling
     let ota = match start_ota_polling(OTA_SERVER_URL, FIRMWARE_VERSION, OTA_SERVER_POLLING_RATE) {
         Ok(_) => {},
         Err(e) => panic!("OTA polling start failed => {}", e)
     };
-
 
     loop {
         print_memory_info();

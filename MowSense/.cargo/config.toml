@@ -3,7 +3,7 @@ target = "xtensa-esp32s3-espidf"
 
 [target.xtensa-esp32s3-espidf]
 linker = "ldproxy"
-runner = "espflash flash --baud 2000000 --monitor"
+runner = "espflash flash --flash-size 16mb --partition-table partitions.csv --baud 2000000 --monitor"
 rustflags = ["--cfg", "espidf_time64"]
 [unstable]
 build-std = ["std", "panic_abort"]
@@ -15,10 +15,10 @@ ESP_IDF_VERSION = "v5.3.3"
 ESP_IDF_TOOLS_INSTALL_DIR = { value = "global" } # add this line
 
 WIFI_SSID= "MowMaster"
-WIFI_PASSWORD = "XXX"
+WIFI_PASSWORD = "12345678"
 OTA_SERVER_URL = "http://ota.turfterminator.smolander.dev"
 PROXY_USER = "santeri@smolander.dev"
-PROXY_PASSWORD = "XXX"
+PROXY_PASSWORD = "ProxyNasty123!"
 
 [toolchain]
 channel = "nightly"
