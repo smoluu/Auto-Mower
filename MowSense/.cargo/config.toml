@@ -14,11 +14,11 @@ MCU="esp32s3"
 ESP_IDF_VERSION = "v5.3.3"
 ESP_IDF_TOOLS_INSTALL_DIR = { value = "global" } # add this line
 
-WIFI_SSID= "turf_terminator_5000"
-WIFI_PASSWORD = "12345678"
+WIFI_SSID= "MowMaster"
+WIFI_PASSWORD = "XXX"
 OTA_SERVER_URL = "http://ota.turfterminator.smolander.dev"
 PROXY_USER = "santeri@smolander.dev"
-PROXY_PASSWORD = "nasty123"
+PROXY_PASSWORD = "XXX"
 
 [toolchain]
 channel = "nightly"
