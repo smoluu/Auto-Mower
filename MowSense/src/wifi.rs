@@ -1,15 +1,14 @@
 use log::info;
 use std::thread;
 use std::time::Duration;
-use anyhow::{Ok, Result};
+use anyhow::{ Ok, Result };
 use esp_idf_svc::wifi::{ EspWifi, AuthMethod, ClientConfiguration, Configuration };
 use esp_idf_svc::eventloop::EspSystemEventLoop;
 use esp_idf_svc::nvs::EspDefaultNvsPartition;
 use esp_idf_svc::hal::prelude::Peripherals;
-use std::sync::mpsc::{ channel,  };
+use std::sync::mpsc::{ channel };
 
 pub fn wifi_connect(mut wifi: EspWifi<'static>) -> Result<EspWifi<'static>, anyhow::Error> {
-
     let ssid = env!("WIFI_SSID");
     let password = env!("WIFI_PASSWORD");
 
@@ -24,7 +23,6 @@ pub fn wifi_connect(mut wifi: EspWifi<'static>) -> Result<EspWifi<'static>, anyh
     // Channels for IP info
     let (ip_sender, ip_receiver) = channel();
 
-
     // Apply configuration
     wifi.set_configuration(&config)?;
     wifi.start()?;
@@ -36,10 +34,11 @@ pub fn wifi_connect(mut wifi: EspWifi<'static>) -> Result<EspWifi<'static>, anyh
     }
 
     wifi.connect()?;
-    info!("Waiting for IP address...");
+    info!("Wifi connecting...");
 
+    // Check if connected and try to reconnect every 2.5 seconds
     while !wifi.is_connected().map_err(|e| anyhow::anyhow!("Connection failed: {}", e))? {
-        thread::sleep(Duration::from_millis(500));
+        thread::sleep(Duration::from_millis(5000));
     }
 
     let ip_info = wifi.sta_netif().get_ip_info()?;
