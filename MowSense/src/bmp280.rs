@@ -114,7 +114,7 @@ impl Bmp280 {
         let adc_p = ((buf[0] as u32) << 12) | ((buf[1] as u32) << 4) | ((buf[2] as u32) >> 4);
         let adc_t = ((buf[3] as u32) << 12) | ((buf[4] as u32) << 4) | ((buf[5] as u32) >> 4);
 
-        info!("BMP280_RAW -> p:{adc_p} t:{adc_t}");
+        //info!("BMP280_RAW -> p:{adc_p} t:{adc_t}");
 
         let temperature: f32 = self.compensate_temperature(adc_t);
         let pressure: f32 = self.compensate_pressure(adc_p);

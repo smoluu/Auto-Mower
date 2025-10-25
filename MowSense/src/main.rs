@@ -12,12 +12,13 @@ use log::{ self, info, Log };
 use esp_idf_sys::*;
 use ota::init_ota;
 
-use crate::{ i2c::scan_i2c_bus, ota::start_ota_polling, wifi::wifi_connect };
 mod ota;
 mod wifi;
 mod i2c;
+mod gy273;
 mod mpu;
 mod bmp280;
+
 static I2C_Timeout: u32 = 2000;
 static PIN_UART0_TX: i32 = 43;
 static PIN_UART0_RX: i32 = 44;
@@ -68,33 +69,21 @@ fn main() -> anyhow::Result<()> {
     let mut i2c = I2cDriver::new(peripherals.i2c0, sda, scl, &config)?;
 
     i2c::scan_i2c_bus(&mut i2c);
-
-    // I2c sensor configuration
-
     // GY-273 Configuration
 
-    /*  Register 0x09: GY-273 Clone Control Register 1
-    Bits 0-1: Mode (01 = continuous)
-    Bits 2-3: Oversampling (00 = 512)
-    Bits 4-5: Full-scale range (10 = 8G)
-    Bits 6-7: Output rate (10 = 200 Hz)
-    Configure for continuous mode, 200 Hz, 8 Gauss range, 512 oversampling
-    */
-    i2c.write(SENSOR_ADDR_GY273, &[0x0a, 0b10_10_00_11], I2C_Timeout)?;
-    // Register 0x0B: SOFT_RST=0 (no reset), SELF_TEST=0 (disabled), RNG<1:0>=10 (8 Gauss),
-    // SET/RESET MODE<1:0>=00 (set and reset on)
-    i2c.write(SENSOR_ADDR_GY273, &[0x0b, 0b0000_10_00], I2C_Timeout)?;
+    let mut gy273 = gy273::GY273::new(SENSOR_ADDR_GY273);
+    gy273
+        .configure(&mut i2c)
+        .map_err(|e| anyhow::anyhow!("Error configuring gy273 sensor: {}", e))?;
 
     // MPU configuration
     let mut mpu = mpu::MPU::new(SENSOR_ADDR_MPU);
     mpu.configure(&mut i2c).map_err(|e| anyhow::anyhow!("Error configuring mpu sensor: {}", e))?;
-    thread::sleep(Duration::from_millis(10));
 
     let mut bmp280 = bmp280::Bmp280::new(SENSOR_ADDR_BMP280);
     bmp280
         .configure(&mut i2c)
         .map_err(|e| anyhow::anyhow!("Error configuring bmp280 sensor: {}", e))?;
-    thread::sleep(Duration::from_millis(10));
 
     // Check OTA partitions
     info!("Init ota: {:?}", init_ota()?);
@@ -121,18 +110,9 @@ fn main() -> anyhow::Result<()> {
         //     info!("Reconnected! IP: {}", ip_info.ip);
         // }
 
-        // reading Magnometer data
-
-        let mut buf = [0u8; 6];
-        i2c.write_read(SENSOR_ADDR_GY273, &[0x01], &mut buf, I2C_Timeout)?;
-
-        let x = i16::from_le_bytes([buf[0], buf[1]]) as f32;
-        let y = i16::from_le_bytes([buf[2], buf[3]]) as f32;
-        let z = i16::from_le_bytes([buf[4], buf[5]]) as f32;
-
-        let heading = (y.atan2(-z) * 180.0) / PI;
-        let heading_normalized = (heading + 360.0) % 360.0;
-        info!("Heading: {:.2}", heading_normalized);
+        // reading GY273
+        let gy273_reading = gy273.read(&mut i2c);
+        info!("Heading: {:.2}", gy273_reading.heading );
 
         // reading MPU
         let mpu_reading: mpu::MPUReading = mpu.read(&mut i2c);
