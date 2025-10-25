@@ -16,14 +16,14 @@ use crate::{ i2c::scan_i2c_bus, ota::start_ota_polling, wifi::wifi_connect };
 mod ota;
 mod wifi;
 mod i2c;
+mod mpu;
 mod bmp280;
 static I2C_Timeout: u32 = 2000;
 static PIN_UART0_TX: i32 = 43;
 static PIN_UART0_RX: i32 = 44;
 static PIN_LED_RGB: i32 = 48;
 
-static PI: f32 = 3.141592;
-static SEA_LEVEL_PRESSURE_PA: f32 = 99000.0;
+const PI: f32 = 3.141592;
 
 // Sensor i2c adresses
 static SENSOR_ADDR_GY273: u8 = 0x2c;
@@ -85,51 +85,16 @@ fn main() -> anyhow::Result<()> {
     // SET/RESET MODE<1:0>=00 (set and reset on)
     i2c.write(SENSOR_ADDR_GY273, &[0x0b, 0b0000_10_00], I2C_Timeout)?;
 
-    // MPU Configuration
-    // Reset / Wake up
-    i2c.write(SENSOR_ADDR_MPU, &[0x6b, 0x00], I2C_Timeout)?;
-    // Digital low pass filter
-    i2c.write(SENSOR_ADDR_MPU, &[0x1a, 0x06], I2C_Timeout)?;
-    // Gyro sensivity   250 deg/s -> 0x00, 500 deg/s -> 0x08, 1000 deg/s -> 0x10, 2000 deg/s -> 0x18
-    i2c.write(SENSOR_ADDR_MPU, &[0x1b, 0x00], I2C_Timeout)?;
-    // Acceleration sensivity +8g
-    i2c.write(SENSOR_ADDR_MPU, &[0x1c, 0x10], I2C_Timeout)?;
+    // MPU configuration
+    let mut mpu = mpu::MPU::new(SENSOR_ADDR_MPU);
+    mpu.configure(&mut i2c).map_err(|e| anyhow::anyhow!("Error configuring mpu sensor: {}", e))?;
+    thread::sleep(Duration::from_millis(10));
 
     let mut bmp280 = bmp280::Bmp280::new(SENSOR_ADDR_BMP280);
-    bmp280.configure(&mut i2c).map_err(|e| anyhow::anyhow!("Connection check failed: {}", e))?;
-    thread::sleep(Duration::from_millis(50));
-
-    // Calibration
-    let mut acc_x_sum = 0.0;
-    let mut acc_y_sum = 0.0;
-    let mut acc_z_sum = 0.0;
-    let mut gyro_x_sum = 0.0;
-    let mut gyro_y_sum = 0.0;
-    let mut gyro_z_sum = 0.0;
-    for _ in 0..100 {
-        let mut buf = [0u8; 14];
-        i2c.write_read(SENSOR_ADDR_MPU, &[0x3b], &mut buf, I2C_Timeout)?;
-        let acc_x = (i16::from_be_bytes([buf[0], buf[1]]) as f32) / 4096.0;
-        let acc_y = (i16::from_be_bytes([buf[2], buf[3]]) as f32) / 4096.0;
-        let acc_z = (i16::from_be_bytes([buf[4], buf[5]]) as f32) / 4096.0;
-        let gyro_x = (i16::from_be_bytes([buf[8], buf[9]]) as f32) / 65.5;
-        let gyro_y = (i16::from_be_bytes([buf[10], buf[11]]) as f32) / 65.5;
-        let gyro_z = (i16::from_be_bytes([buf[12], buf[13]]) as f32) / 65.5;
-        acc_x_sum += acc_x;
-        acc_y_sum += acc_y;
-        acc_z_sum += acc_z;
-        gyro_x_sum += gyro_x;
-        gyro_y_sum += gyro_y;
-        gyro_z_sum += gyro_z;
-        std::thread::sleep(std::time::Duration::from_millis(10));
-    }
-    let acc_x_offset = acc_x_sum / 100.0;
-    let acc_y_offset = acc_y_sum / 100.0 + 1.0;
-    let acc_z_offset = acc_z_sum / 100.0;
-    let gyro_x_offset = gyro_x_sum / 100.0;
-    let gyro_y_offset = gyro_y_sum / 100.0;
-    let gyro_z_offset = gyro_z_sum / 100.0;
-
+    bmp280
+        .configure(&mut i2c)
+        .map_err(|e| anyhow::anyhow!("Error configuring bmp280 sensor: {}", e))?;
+    thread::sleep(Duration::from_millis(10));
 
     // Check OTA partitions
     info!("Init ota: {:?}", init_ota()?);
@@ -169,68 +134,23 @@ fn main() -> anyhow::Result<()> {
         let heading_normalized = (heading + 360.0) % 360.0;
         info!("Heading: {:.2}", heading_normalized);
 
-        // Reading MPU data
+        // reading MPU
+        let mpu_reading: mpu::MPUReading = mpu.read(&mut i2c);
+        info!(
+            "Roll: {:.2} Pitch: {:.2} Temp: {:.2}°C, Acc: {:.2}G",
+            mpu_reading.roll,
+            mpu_reading.pitch,
+            mpu_reading.temperature_c,
+            mpu_reading.acc_total
+        );
 
-        let mut buf = [0u8; 14];
-        i2c.write_read(SENSOR_ADDR_MPU, &[0x3b], &mut buf, I2C_Timeout)?;
-
-        let acc_x = (i16::from_be_bytes([buf[0], buf[1]]) as f32) / 4096.0 - acc_x_offset;
-        let acc_y = (i16::from_be_bytes([buf[2], buf[3]]) as f32) / 4096.0 - acc_y_offset;
-        let acc_z = (i16::from_be_bytes([buf[4], buf[5]]) as f32) / 4096.0 - acc_z_offset;
-        let temperature = i16::from_be_bytes([buf[6], buf[7]]) as f32;
-        let gyro_x = (i16::from_be_bytes([buf[8], buf[9]]) as f32) / 65.5 - gyro_x_offset;
-        let gyro_y = (i16::from_be_bytes([buf[10], buf[11]]) as f32) / 65.5 - gyro_y_offset;
-        let gyro_z = (i16::from_be_bytes([buf[12], buf[13]]) as f32) / 65.5 - gyro_z_offset;
-
-        let temperature_c = temperature / 340.0 + 36.53 - 16.9;
-        // Remap accelerometer axes to robot frame: X (forward), Y (left), Z (up)
-        let acc_x_robot = -acc_z; // Sensor Z (backward) -> Robot X (forward)
-        let acc_y_robot = -acc_x; // Sensor X (left) -> Robot Y (left)
-        let acc_z_robot = -acc_y; // Sensor Y (down) -> Robot Z (up, negate gravity)
-
-        // Remap gyroscope axes to robot frame
-        let gyro_x_robot = -gyro_z; // Sensor Z -> Robot X
-        let gyro_y_robot = -gyro_x; // Sensor X -> Robot Y
-        let gyro_z_robot = -gyro_y; // Sensor Y -> Robot Z
-
-        // Total acceleration in robot frame
-        let acc_total = (
-            acc_x_robot * acc_x_robot +
-            acc_y_robot * acc_y_robot +
-            acc_z_robot * acc_z_robot
-        ).sqrt();
-
-        // Normalize acceleration vectors
-        let norm = (
-            acc_x_robot * acc_x_robot +
-            acc_y_robot * acc_y_robot +
-            acc_z_robot * acc_z_robot
-        ).sqrt();
-
-        let (acc_x_robot, acc_y_robot, acc_z_robot) = if norm > 1e-6 {
-            (acc_x_robot / norm, acc_y_robot / norm, acc_z_robot / norm)
-        } else {
-            (acc_x_robot, acc_y_robot, acc_z_robot)
-        };
-
-        // Roll and pitch in robot frame
-        let roll =
-            (acc_y_robot.atan2(f32::sqrt(acc_x_robot * acc_x_robot + acc_z_robot * acc_z_robot)) *
-                180.0) /
-            PI;
-        let pitch =
-            (acc_x_robot.atan2(f32::sqrt(acc_y_robot * acc_y_robot + acc_z_robot * acc_z_robot)) *
-                180.0) /
-            PI;
-
-        info!("Roll: {:.2} Pitch: {:.2} Temp: {:.2}°C", roll, pitch, temperature_c);
-        
         // reading bmp280
-        let bmp_reading = bmp280.read(&mut i2c);
-        info!("BMP280 -> pressure: {}Pa temperature: {}", bmp_reading.pressure, bmp_reading.temperature);
-
-
-
+        let bmp_reading: bmp280::Bmp280Reading = bmp280.read(&mut i2c);
+        info!(
+            "BMP280 -> Pressure: {}Pa Temperature: {}°C",
+            bmp_reading.pressure,
+            bmp_reading.temperature
+        );
 
         thread::sleep(Duration::from_millis(100));
     }
