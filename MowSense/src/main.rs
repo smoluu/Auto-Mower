@@ -1,14 +1,15 @@
 use std::{ sync::{ Arc, Mutex }, thread, time::Duration };
-use esp_idf_hal::{ prelude::Peripherals, units::Hertz };
-use esp_idf_svc::{
-    eventloop::EspSystemEventLoop,
-    hal::*,
-    nvs::EspDefaultNvsPartition,
-    wifi::EspWifi,
+use esp_idf_hal::{
+    gpio::{ self, AnyIOPin, Pins },
+    io::Read,
+    prelude::Peripherals,
+    uart,
+    units::Hertz,
 };
+use esp_idf_svc::{ eventloop::EspSystemEventLoop, nvs::EspDefaultNvsPartition, wifi::EspWifi };
 use esp_idf_hal::i2c::*;
 
-use log::{ self, info, Log };
+use log::{ self, debug, info, Log };
 use esp_idf_sys::*;
 use ota::init_ota;
 
@@ -18,10 +19,9 @@ mod i2c;
 mod gy273;
 mod mpu;
 mod bmp280;
+mod lidar;
 
 static I2C_Timeout: u32 = 2000;
-static PIN_UART0_TX: i32 = 43;
-static PIN_UART0_RX: i32 = 44;
 static PIN_LED_RGB: i32 = 48;
 
 const PI: f32 = 3.141592;
@@ -58,17 +58,39 @@ fn main() -> anyhow::Result<()> {
     //let mut wifi = EspWifi::new(peripherals.modem, sys_loop.clone(), nvs)?;
     //wifi = wifi_connect(wifi).unwrap();
 
+    // UART driver setup
+    // https://docs.esp-rs.org/esp-idf-hal/esp_idf_hal/uart/index.html
+    let uart_rx = peripherals.pins.gpio18;
+    let uart_config = uart::config::Config
+        ::default()
+        .baudrate(Hertz(230400))
+        .data_bits(uart::config::DataBits::DataBits8)
+        .stop_bits(uart::config::StopBits::STOP1)
+        .parity_none()
+        .flow_control(uart::config::FlowControl::None)
+        .rx_fifo_size(4096); // RX buffer size
+    let mut uart = uart::UartRxDriver
+        ::new(
+            peripherals.uart1,
+            uart_rx,
+            Option::<AnyIOPin>::None,
+            Option::<AnyIOPin>::None,
+            &uart_config
+        )
+        .map_err(|e| anyhow::anyhow!("Error configuring uart driver: {e}"))?;
+
+    // I2C configuration
     let sda = peripherals.pins.gpio8;
     let scl = peripherals.pins.gpio9;
 
-    // I2C configuration
-    let config = I2cConfig::new()
+    let i2c_config = I2cConfig::new()
         .baudrate(Hertz(100_000)) // 100 kHz
         .sda_enable_pullup(true)
         .scl_enable_pullup(true);
-    let mut i2c = I2cDriver::new(peripherals.i2c0, sda, scl, &config)?;
+    let mut i2c = I2cDriver::new(peripherals.i2c0, sda, scl, &i2c_config)?;
 
     i2c::scan_i2c_bus(&mut i2c);
+
     // GY-273 Configuration
 
     let mut gy273 = gy273::GY273::new(SENSOR_ADDR_GY273);
@@ -110,11 +132,11 @@ fn main() -> anyhow::Result<()> {
         //     info!("Reconnected! IP: {}", ip_info.ip);
         // }
 
-        // reading GY273
+        // Reading GY273
         let gy273_reading = gy273.read(&mut i2c);
-        info!("Heading: {:.2}", gy273_reading.heading );
+        info!("Heading: {:.2}", gy273_reading.heading);
 
-        // reading MPU
+        // Reading MPU
         let mpu_reading: mpu::MPUReading = mpu.read(&mut i2c);
         info!(
             "Roll: {:.2} Pitch: {:.2} Temp: {:.2}°C, Acc: {:.2}G",
@@ -124,13 +146,15 @@ fn main() -> anyhow::Result<()> {
             mpu_reading.acc_total
         );
 
-        // reading bmp280
+        // Reading bmp280
         let bmp_reading: bmp280::Bmp280Reading = bmp280.read(&mut i2c);
         info!(
             "BMP280 -> Pressure: {}Pa Temperature: {}°C",
             bmp_reading.pressure,
             bmp_reading.temperature
         );
+        
+        // Reading lidar
 
         thread::sleep(Duration::from_millis(100));
     }
