@@ -109,7 +109,7 @@ impl Bmp280 {
        Read 6 bytes for raw pressure and temperature ADC values
         */
         let mut buf = [0u8; 6];
-        i2c.write_read(self.addr, &[0xf7], &mut buf, 100);
+        i2c.write_read(self.addr, &[0xf7], &mut buf, 100).unwrap();
         // Combine bytes
         let adc_p = ((buf[0] as u32) << 12) | ((buf[1] as u32) << 4) | ((buf[2] as u32) >> 4);
         let adc_t = ((buf[3] as u32) << 12) | ((buf[4] as u32) << 4) | ((buf[5] as u32) >> 4);

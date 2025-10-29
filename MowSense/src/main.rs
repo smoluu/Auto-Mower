@@ -1,6 +1,7 @@
 use std::{ sync::{ Arc, Mutex }, thread, time::Duration };
 use esp_idf_hal::{
-    gpio::{ self, AnyIOPin, Pins },
+    gpio::{ self, AnyIOPin, Pins, PinDriver, Output },
+    ledc::{LedcDriver, LedcTimerDriver, config::TimerConfig},
     io::Read,
     prelude::Peripherals,
     uart,
@@ -42,13 +43,6 @@ fn main() -> anyhow::Result<()> {
 
     // Bind the log crate to the ESP Logging facilities
     esp_idf_svc::log::EspLogger::initialize_default();
-
-    // info!("Hello, world!");
-    // info!("TESTTESTTESTTESTTESTTESTTESTTESTTESTTESTTESTTESTTESTTESTTESTTESTTESTTEST");
-    // info!("TESTTESTTESTTESTTESTTESTTESTTESTTESTTESTTESTTESTTESTTESTTESTTESTTESTTEST");
-    // info!("TESTTESTTESTTESTTESTTESTTESTTESTTESTTESTTESTTESTTESTTESTTESTTESTTESTTEST");
-    // info!("TESTTESTTESTTESTTESTTESTTESTTESTTESTTESTTESTTESTTESTTESTTESTTESTTESTTEST");
-    // info!("TESTTESTTESTTESTTESTTESTTESTTESTTESTTESTTESTTESTTESTTESTTESTTESTTESTTEST");
 
     let peripherals = Peripherals::take().unwrap();
 
@@ -106,6 +100,32 @@ fn main() -> anyhow::Result<()> {
     bmp280
         .configure(&mut i2c)
         .map_err(|e| anyhow::anyhow!("Error configuring bmp280 sensor: {}", e))?;
+
+    // L298N setup
+    let mut md_l_in1 = PinDriver::output(peripherals.pins.gpio11)?;
+    let mut md_l_in2 = PinDriver::output(peripherals.pins.gpio12)?;
+    let mut md_r_in1 = PinDriver::output(peripherals.pins.gpio36)?;
+    let mut md_r_in2 = PinDriver::output(peripherals.pins.gpio37)?;
+
+    // PWM setup for motor driver speed control
+    let timer_config = TimerConfig::new().frequency(Hertz(20_000)).resolution(esp_idf_hal::ledc::Resolution::Bits8);
+    let timer = LedcTimerDriver::new(peripherals.ledc.timer0, &timer_config)?;
+    let mut md_l_pwm = LedcDriver::new(peripherals.ledc.channel0, &timer, peripherals.pins.gpio10)?;
+    let mut md_r_pwm = LedcDriver::new(peripherals.ledc.channel1, &timer, peripherals.pins.gpio38)?;
+
+
+    // Controlling motor drivers
+    md_l_in1.set_high()?;
+    md_l_in2.set_low()?;
+    md_r_in1.set_high()?;
+    md_r_in2.set_low()?;
+    md_l_pwm.set_duty(150)?;
+    md_r_pwm.set_duty(150)?;
+    // reverse
+    // md_l_in1.set_low()?;
+    // md_l_in2.set_high()?;
+    // md_r_in1.set_low()?;
+    // md_r_in2.set_high()?;
 
     // Check OTA partitions
     info!("Init ota: {:?}", init_ota()?);
