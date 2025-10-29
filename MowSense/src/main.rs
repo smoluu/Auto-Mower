@@ -1,9 +1,10 @@
 use std::{ sync::{ Arc, Mutex }, thread, time::Duration };
 use esp_idf_hal::{
-    gpio::{ self, AnyIOPin, Pins, PinDriver, Output },
-    ledc::{LedcDriver, LedcTimerDriver, config::TimerConfig},
+    gpio::{ self, AnyIOPin, Output, PinDriver, Pins },
     io::Read,
+    ledc::{ config::TimerConfig, LedcDriver, LedcTimer, LedcTimerDriver },
     prelude::Peripherals,
+    timer::TimerDriver,
     uart,
     units::Hertz,
 };
@@ -21,6 +22,7 @@ mod gy273;
 mod mpu;
 mod bmp280;
 mod lidar;
+mod buzzer;
 
 static I2C_Timeout: u32 = 2000;
 static PIN_LED_RGB: i32 = 48;
@@ -101,6 +103,31 @@ fn main() -> anyhow::Result<()> {
         .configure(&mut i2c)
         .map_err(|e| anyhow::anyhow!("Error configuring bmp280 sensor: {}", e))?;
 
+    // Beeper setup
+    let buzzer_timer_cfg = TimerConfig::new()
+        .frequency(Hertz(20_000))
+        .resolution(esp_idf_hal::ledc::Resolution::Bits10);
+    let mut buzzer_timer = LedcTimerDriver::new(
+        peripherals.ledc.timer1,
+        &buzzer_timer_cfg
+    ).unwrap();
+    let mut buzzer_pwm = LedcDriver::new(
+        peripherals.ledc.channel2,
+        &buzzer_timer,
+        peripherals.pins.gpio5
+    ).unwrap();
+
+    // Controlling buzzer
+
+    // buzzer_pwm.set_duty(512)?;
+    // buzzer_timer.set_frequency(Hertz(800))?;
+    // thread::sleep(Duration::from_millis(1000));
+    // buzzer_pwm.set_duty(0)?;
+    
+    thread::spawn(move || {
+        buzzer::play(&mut buzzer_pwm, &mut buzzer_timer, buzzer::STARTUP);
+    });
+
     // L298N setup
     let mut md_l_in1 = PinDriver::output(peripherals.pins.gpio11)?;
     let mut md_l_in2 = PinDriver::output(peripherals.pins.gpio12)?;
@@ -108,19 +135,20 @@ fn main() -> anyhow::Result<()> {
     let mut md_r_in2 = PinDriver::output(peripherals.pins.gpio37)?;
 
     // PWM setup for motor driver speed control
-    let timer_config = TimerConfig::new().frequency(Hertz(20_000)).resolution(esp_idf_hal::ledc::Resolution::Bits8);
-    let timer = LedcTimerDriver::new(peripherals.ledc.timer0, &timer_config)?;
+    let md_timer_config = TimerConfig::new()
+        .frequency(Hertz(20_000))
+        .resolution(esp_idf_hal::ledc::Resolution::Bits10);
+    let timer= LedcTimerDriver::new(peripherals.ledc.timer0, &md_timer_config)?;
     let mut md_l_pwm = LedcDriver::new(peripherals.ledc.channel0, &timer, peripherals.pins.gpio10)?;
     let mut md_r_pwm = LedcDriver::new(peripherals.ledc.channel1, &timer, peripherals.pins.gpio38)?;
 
-
-    // Controlling motor drivers
+    // Controlling motor drivers PWM duty 0-1023 on 10Bit
     md_l_in1.set_high()?;
     md_l_in2.set_low()?;
     md_r_in1.set_high()?;
     md_r_in2.set_low()?;
-    md_l_pwm.set_duty(150)?;
-    md_r_pwm.set_duty(150)?;
+    md_l_pwm.set_duty(600)?;
+    md_r_pwm.set_duty(600)?;
     // reverse
     // md_l_in1.set_low()?;
     // md_l_in2.set_high()?;
@@ -173,7 +201,7 @@ fn main() -> anyhow::Result<()> {
             bmp_reading.pressure,
             bmp_reading.temperature
         );
-        
+
         // Reading lidar
 
         thread::sleep(Duration::from_millis(100));
