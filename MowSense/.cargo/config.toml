@@ -19,6 +19,3 @@ WIFI_PASSWORD = "12345678"
 OTA_SERVER_URL = "http://ota.turfterminator.smolander.dev"
 PROXY_USER = "santeri@smolander.dev"
 PROXY_PASSWORD = "asdasd"
-
-[toolchain]
-channel = "nightly"

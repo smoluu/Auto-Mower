@@ -1,8 +1,9 @@
 use std::{ sync::{ Arc, Mutex }, thread, time::Duration };
 use esp_idf_hal::{
-    gpio::{ self, AnyIOPin, Output, PinDriver, Pins },
+    can::AsyncCanDriver,
+    gpio::{ self, AnyIOPin, AnyOutputPin, Output, PinDriver, Pins },
     io::Read,
-    ledc::{ config::TimerConfig, LedcDriver, LedcTimer, LedcTimerDriver },
+    ledc::{ LedcDriver, LedcTimer, LedcTimerDriver, config::TimerConfig },
     prelude::Peripherals,
     timer::TimerDriver,
     uart,
@@ -23,6 +24,7 @@ mod mpu;
 mod bmp280;
 mod lidar;
 mod buzzer;
+mod drive;
 
 static I2C_Timeout: u32 = 2000;
 static PIN_LED_RGB: i32 = 48;
@@ -123,38 +125,49 @@ fn main() -> anyhow::Result<()> {
     // buzzer_timer.set_frequency(Hertz(800))?;
     // thread::sleep(Duration::from_millis(1000));
     // buzzer_pwm.set_duty(0)?;
-    
+
     thread::spawn(move || {
         buzzer::play(&mut buzzer_pwm, &mut buzzer_timer, buzzer::STARTUP);
     });
 
     // L298N setup
-    let mut md_l_in1 = PinDriver::output(peripherals.pins.gpio11)?;
-    let mut md_l_in2 = PinDriver::output(peripherals.pins.gpio12)?;
-    let mut md_r_in1 = PinDriver::output(peripherals.pins.gpio36)?;
-    let mut md_r_in2 = PinDriver::output(peripherals.pins.gpio37)?;
+    let motor_left_in1 = PinDriver::output(peripherals.pins.gpio11)?;
+    let motor_left_in2 = PinDriver::output(peripherals.pins.gpio12)?;
+    let motor_right_in1 = PinDriver::output(peripherals.pins.gpio36)?;
+    let motor_right_in2 = PinDriver::output(peripherals.pins.gpio37)?;
 
     // PWM setup for motor driver speed control
     let md_timer_config = TimerConfig::new()
         .frequency(Hertz(20_000))
         .resolution(esp_idf_hal::ledc::Resolution::Bits10);
-    let timer= LedcTimerDriver::new(peripherals.ledc.timer0, &md_timer_config)?;
-    let mut md_l_pwm = LedcDriver::new(peripherals.ledc.channel0, &timer, peripherals.pins.gpio10)?;
-    let mut md_r_pwm = LedcDriver::new(peripherals.ledc.channel1, &timer, peripherals.pins.gpio38)?;
+    let timer = LedcTimerDriver::new(peripherals.ledc.timer0, &md_timer_config)?;
+    let mut motor_left_pwm = LedcDriver::new(
+        peripherals.ledc.channel0,
+        &timer,
+        peripherals.pins.gpio10
+    )?;
+    let mut motor_right_pwm = LedcDriver::new(
+        peripherals.ledc.channel1,
+        &timer,
+        peripherals.pins.gpio38
+    )?;
 
-    // Controlling motor drivers PWM duty 0-1023 on 10Bit
-    md_l_in1.set_high()?;
-    md_l_in2.set_low()?;
-    md_r_in1.set_high()?;
-    md_r_in2.set_low()?;
-    md_l_pwm.set_duty(600)?;
-    md_r_pwm.set_duty(600)?;
-    // reverse
-    // md_l_in1.set_low()?;
-    // md_l_in2.set_high()?;
-    // md_r_in1.set_low()?;
-    // md_r_in2.set_high()?;
+    let mut drive = drive::Drive::new(
+        motor_left_pwm,
+        motor_right_pwm,
+        motor_left_in1,
+        motor_left_in2,
+        motor_right_in1,
+        motor_right_in2
+    );
 
+    // controlling motor drivers
+    drive.set_speed(1.0, 1.0);
+    thread::sleep(Duration::from_millis(4000));
+    drive.set_speed(-1.0, -1.0);
+    thread::sleep(Duration::from_millis(4000));
+    drive.set_speed(0.0, 0.0);
+    
     // Check OTA partitions
     info!("Init ota: {:?}", init_ota()?);
 
