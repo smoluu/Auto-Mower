@@ -141,12 +141,12 @@ fn main() -> anyhow::Result<()> {
         .frequency(Hertz(20_000))
         .resolution(esp_idf_hal::ledc::Resolution::Bits10);
     let timer = LedcTimerDriver::new(peripherals.ledc.timer0, &md_timer_config)?;
-    let mut motor_left_pwm = LedcDriver::new(
+    let motor_left_pwm = LedcDriver::new(
         peripherals.ledc.channel0,
         &timer,
         peripherals.pins.gpio10
     )?;
-    let mut motor_right_pwm = LedcDriver::new(
+    let motor_right_pwm = LedcDriver::new(
         peripherals.ledc.channel1,
         &timer,
         peripherals.pins.gpio38
@@ -158,15 +158,10 @@ fn main() -> anyhow::Result<()> {
         motor_left_in1,
         motor_left_in2,
         motor_right_in1,
-        motor_right_in2
+        motor_right_in2,
     );
 
-    // controlling motor drivers
-    drive.set_speed(1.0, 1.0);
-    thread::sleep(Duration::from_millis(4000));
-    drive.set_speed(-1.0, -1.0);
-    thread::sleep(Duration::from_millis(4000));
-    drive.set_speed(0.0, 0.0);
+    drive.max_speed_delta = 0.1;
     
     // Check OTA partitions
     info!("Init ota: {:?}", init_ota()?);
@@ -216,6 +211,8 @@ fn main() -> anyhow::Result<()> {
         );
 
         // Reading lidar
+        drive.set_speed_damped(0.7, 0.7);
+
 
         thread::sleep(Duration::from_millis(100));
     }
