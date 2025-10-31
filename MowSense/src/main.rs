@@ -1,4 +1,4 @@
-use std::{ sync::{ Arc, Mutex }, thread, time::Duration };
+use std::{ net::{SocketAddr, UdpSocket}, sync::{ Arc, Mutex }, thread, time::Duration };
 use esp_idf_hal::{
     can::AsyncCanDriver,
     gpio::{ self, AnyIOPin, AnyOutputPin, Output, PinDriver, Pins },
@@ -12,7 +12,7 @@ use esp_idf_hal::{
 use esp_idf_svc::{ eventloop::EspSystemEventLoop, nvs::EspDefaultNvsPartition, wifi::EspWifi };
 use esp_idf_hal::i2c::*;
 
-use log::{ self, debug, info, Log };
+use log::{ self, Log, debug, error, info };
 use esp_idf_sys::*;
 use ota::init_ota;
 
@@ -26,7 +26,6 @@ mod lidar;
 mod buzzer;
 mod drive;
 
-static I2C_Timeout: u32 = 2000;
 static PIN_LED_RGB: i32 = 48;
 
 const PI: f32 = 3.141592;
@@ -53,8 +52,12 @@ fn main() -> anyhow::Result<()> {
     //  Wifi setup
     let sys_loop = EspSystemEventLoop::take().unwrap();
     let nvs = EspDefaultNvsPartition::take().ok();
-    //let mut wifi = EspWifi::new(peripherals.modem, sys_loop.clone(), nvs)?;
-    //wifi = wifi_connect(wifi).unwrap();
+    let mut wifi = EspWifi::new(peripherals.modem, sys_loop.clone(), nvs)?;
+    wifi = wifi::wifi_connect(wifi).unwrap();
+
+    let socket = UdpSocket::bind("0.0.0.0:6968")?;
+    socket.set_nonblocking(true)?;
+    socket.set_broadcast(true);
 
     // UART driver setup
     // https://docs.esp-rs.org/esp-idf-hal/esp_idf_hal/uart/index.html
@@ -158,11 +161,11 @@ fn main() -> anyhow::Result<()> {
         motor_left_in1,
         motor_left_in2,
         motor_right_in1,
-        motor_right_in2,
+        motor_right_in2
     );
 
     drive.max_speed_delta = 0.1;
-    
+
     // Check OTA partitions
     info!("Init ota: {:?}", init_ota()?);
 
@@ -211,10 +214,36 @@ fn main() -> anyhow::Result<()> {
         );
 
         // Reading lidar
-        drive.set_speed_damped(0.7, 0.7);
+        //drive.set_speed_damped(0.7, 0.7);
 
+        // Read udp packets
+        let mut buf = [0; 1400];
+        match socket.recv_from(&mut buf) {
+            Ok((num_bytes_read, src)) => {
+                info!("Received bytes -> {:?}", &mut buf[..num_bytes_read]);
 
-        thread::sleep(Duration::from_millis(100));
+                // Echo back    
+                let _ = socket.send_to(&buf[..num_bytes_read], src);
+
+            }
+            Err(e) =>
+                match e.kind() {
+                    std::io::ErrorKind::WouldBlock => {
+                        // No data available, do something else or retry later
+                        std::thread::sleep(std::time::Duration::from_millis(100));
+                    }
+                    _ => {
+                        info!("encountered IO error: {e}");
+                        std::thread::sleep(std::time::Duration::from_millis(100));
+                    }
+                }
+        }
+        let dest: SocketAddr = "10.26.180.49:6969".parse().unwrap();
+        match socket.send_to(b"HELLOOONIGGAA", dest) {
+            Ok(n) => println!("Sent {} bytes", n),
+            Err(e) => eprintln!("Send error: {}", e),
+        }
+        thread::sleep(Duration::from_millis(500));
     }
 }
 fn print_memory_info() {
