@@ -9,7 +9,6 @@ ms short for MowSense
 */
 
 mod packets;
-use packets::BotControlPacket;
 use serde::{ Serialize, Serializer };
 
 use core::error;
@@ -22,21 +21,22 @@ use std::time::{ Duration, Instant };
 use std::{ io::Error, net::UdpSocket };
 use std::{ thread };
 
-use log::{ info, error };
+use log::{ debug, error, info };
 
 fn main() -> Result<(), Error> {
     env_logger::init();
 
     const CONTROL_LOOP_INTERVAL: u64 = 20; // Milliseconds
+    const BOTCONTROL_CONNECTION_LOOP_INTERVAL: u64 = 20;
+    const MOWSENSE_CONNECTION_LOOP_INTERVAL: u64 = 20;
 
     // UDP socket for BotControl
     let botcontrol_socket = Arc::new(Mutex::new(UdpSocket::bind("0.0.0.0:6969")?));
-    botcontrol_socket.lock().unwrap().set_broadcast(true).expect("Could not enable broadcast");
+    botcontrol_socket.lock().unwrap().set_nonblocking(true).expect("Could not enable nonblocking");
 
     // UDP socket for MowSense
     let mowsense_socket = Arc::new(Mutex::new(UdpSocket::bind("0.0.0.0:0")?));
     mowsense_socket.lock().unwrap().set_broadcast(true).expect("Could not enable broadcast");
-    mowsense_socket.lock().unwrap().set_nonblocking(true).expect("Could not enable nonblocking");
 
     // Mspc channel for sending data between control loop and mow sense UDP connection
     let (control_loop_ms_tx, control_loop_ms_rx) = mpsc::channel::<Vec<u8>>();
@@ -44,7 +44,7 @@ fn main() -> Result<(), Error> {
     // Mspc channel for sending data between control loop and BotControl UDP connection
     let (control_loop_bc_tx, control_loop_bc_rx) = mpsc::channel::<Vec<u8>>();
 
-    // Control loop, receives data from mpsc channel,
+    // Control loop, receives data from BotControl and mowsense mpsc channels,
     thread::spawn(move || {
         let mut last_loop = Instant::now();
 
@@ -54,7 +54,9 @@ fn main() -> Result<(), Error> {
             }
             // Check for new data from BotControl mpsc channel
             match control_loop_bc_rx.try_recv() {
-                Ok(data) => {}
+                Ok(data) => {
+                    info!("CONTROL_LOOP -> Received {} bytes from ", data.len());
+                }
                 Err(std::sync::mpsc::TryRecvError::Empty) => {} // Skip if no data
                 Err(e) => {
                     error!("BOTCONTROL_SOCKET -> Error trying to receive data from mpsc channel {}", e);
@@ -71,18 +73,17 @@ fn main() -> Result<(), Error> {
     thread::spawn(move || {
         info!("Started BotControl UDP connection thread");
 
-        let mut rx_buf = [0u8; 1024];
+        let mut buf = [0u8; 1024];
         let mut last_keepalive = Instant::now();
-
+        let mut dest: Option<SocketAddr> = None;
         loop {
             let socket = botcontrol_socket.lock().unwrap();
 
             // Send keepalive every 1 second
-            if last_keepalive.elapsed() >= Duration::from_secs(1) {
+            if last_keepalive.elapsed() >= Duration::from_secs(1) && dest.is_some() {
                 // Here we broadcast to a default address or some known BotControl address
                 // If you have a specific destination, replace with that
-                let dest = "255.255.255.255:6969".parse::<SocketAddr>().unwrap();
-                if let Err(e) = socket.send_to(b"KEEPALIVE", &dest) {
+                if let Err(e) = socket.send_to(b"KEEPALIVE", dest.unwrap()) {
                     error!("BOTCONTROL_SOCKET -> Could not send keepalive -> {}", e);
                 } else {
                     info!("BOTCONTROL_SOCKET -> Sent keepalive");
@@ -91,18 +92,26 @@ fn main() -> Result<(), Error> {
             }
 
             // Receive data from BotControl, Send to Control loop
-            match socket.recv_from(&mut rx_buf) {
+            match socket.recv_from(&mut buf) {
                 Ok((len, src)) => {
                     info!("BOTCONTROL_SOCKET -> Received {len} bytes from {src}");
-                    control_loop_bc_tx.send((&rx_buf[..len]).to_vec()).unwrap();
+                    // Echo ACK back
+                    if &buf[..len] == b"ACK" {
+                        dest = Some(src);
+                        let _ = socket.send_to(&buf[..len], src);
+                    } else {
+                        // Send to Control loop
+                        control_loop_bc_tx.send((&buf[..len]).to_vec()).unwrap();
+                    }
                 }
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {} // Empty ignore
                 Err(e) => {
                     error!("BOTCONTROL_SOCKET -> Could not read from BotControl -> {}", e);
                 }
             }
 
             drop(socket);
-            thread::sleep(Duration::from_millis(500));
+            thread::sleep(Duration::from_millis(BOTCONTROL_CONNECTION_LOOP_INTERVAL));
         }
     });
 
@@ -158,7 +167,7 @@ fn main() -> Result<(), Error> {
             }
 
             drop(socket);
-            thread::sleep(Duration::from_millis(500));
+            thread::sleep(Duration::from_millis(MOWSENSE_CONNECTION_LOOP_INTERVAL));
         }
     });
 

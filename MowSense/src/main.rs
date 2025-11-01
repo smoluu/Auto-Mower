@@ -214,7 +214,7 @@ fn main() -> anyhow::Result<()> {
         );
 
         // Reading lidar
-        //drive.set_speed_damped(0.7, 0.7);
+        //drive.set_speed(1.0, 1.0);
 
         // Read udp packets
         let mut buf = [0; 1400];

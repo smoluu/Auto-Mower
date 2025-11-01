@@ -17,6 +17,8 @@ const targetFPS = 120;
 const blurTargetFps = 15; // Used to limit renderer fps when app is not in focus
 let rendererTargetFps = targetFPS; // Used to limit renderer frames per second
 let delta = 0; // Renderer frame time
+let connectionState: "disconnected" | "connecting" | "connected" = "disconnected";
+const connectionStatusDot = document.querySelector("#connectionStatusDot") as HTMLDivElement;
 
 enum CanvasTool {
   None = "none",
@@ -304,8 +306,10 @@ cameraVideo.src = "http://localhost:8080/stream";
 const deviceConnectButton = document.querySelector("#device-connect-btn");
 deviceConnectButton?.addEventListener("click", async () => {
   try {
-    let test = await invoke("connect_udp",{address: "10.66.66.5", port: 6969})
-    console.log("test", test)
+    if (connectionState == "disconnected") {
+      let test = await invoke("connect_udp",{address: "10.66.66.50", port: 6969})
+      console.log("test", test)
+    }
 
   } catch (e) {
     console.log("Error connecting: ", e)
@@ -314,22 +318,23 @@ deviceConnectButton?.addEventListener("click", async () => {
 
 
 listen("state_connection_update", (e) => {
-  const connectionStatusDot = document.querySelector("#connectionStatusDot") as HTMLDivElement;
-  switch (e.payload) {
-    case "disconnected": {
-      connectionStatusDot.style.backgroundColor = "#a80000";
-      break;
-    }
-    case "connecting": {
-      connectionStatusDot.style.backgroundColor = "#ffff00";
-      break;
-    }
-    case "connected": {
-      connectionStatusDot.style.backgroundColor = "#00c40aff";
-      break;
-    }
-    default: {
-      console.error("state_connection_update failed:", e);
-    }
+  console.log(e.payload)
+  const state = e.payload
+  if (state === "disconnected" || state === "connecting" || state === "connected") {
+    connectionState = state;
+    updateConnectionUI();
+  } else {
+    console.error("Invalid connection state:", e);
   }
 });
+function updateConnectionUI() {
+  const colors = {
+    disconnected: "#a80000",
+    connecting: "#ffff00",
+    connected: "#00c40aff",
+  };
+  connectionStatusDot.style.backgroundColor = colors[connectionState];
+
+  // Optional: update tooltip, badge, sound, etc.
+  connectionStatusDot.title = `Status: ${connectionState}`;
+}
