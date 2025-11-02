@@ -103,6 +103,67 @@
   transform: translateY(2px);
 }
 
+.toggle {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      font-family: sans-serif;
+      font-weight: bold;
+    }
+
+    .switch {
+      width: 140px;
+      height: 34px;
+      background: #ddd;
+      border-radius: 17px;
+      position: relative;
+      cursor: pointer;
+      overflow: hidden;
+      box-shadow: inset 0 2px 4px rgba(0,0,0,0.1);
+    }
+
+    .switch::before {
+      content: 'MANUAL';
+      position: absolute;
+      left: 50px;
+      top: 50%;
+      transform: translateY(-50%);
+      font-size: 11px;
+      color: #555;
+      transition: 0.3s;
+      z-index: 1;
+    }
+
+    .switch::after {
+      content: '';
+      width: 30px;
+      height: 30px;
+      background: white;
+      border-radius: 50%;
+      position: absolute;
+      top: 2px;
+      left: 2px;
+      transition: 0.3s;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+      z-index: 2;
+    }
+
+    input { display: none; }
+
+    input:checked + .switch {
+      background: #4CAF50;
+    }
+
+    input:checked + .switch::before {
+      content: 'AUTO';
+      left: 12px;
+      color: white;
+    }
+
+    input:checked + .switch::after {
+      transform: translateX(105px);
+    }
+
 input {
   background-color: var(--lighter-gray);
   --webkit-appearance: none;

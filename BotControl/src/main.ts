@@ -19,6 +19,7 @@ let rendererTargetFps = targetFPS; // Used to limit renderer frames per second
 let delta = 0; // Renderer frame time
 let connectionState: "disconnected" | "connecting" | "connected" = "disconnected";
 const connectionStatusDot = document.querySelector("#connectionStatusDot") as HTMLDivElement;
+const connectButton = document.querySelector("#device-connect-btn") as HTMLDivElement;
 
 enum CanvasTool {
   None = "none",
@@ -333,8 +334,11 @@ function updateConnectionUI() {
     connecting: "#ffff00",
     connected: "#00c40aff",
   };
+  const text = {
+    disconnected: "Connect",
+    connecting: "Disconnect",
+    connected: "Disconnect"
+  }
   connectionStatusDot.style.backgroundColor = colors[connectionState];
-
-  // Optional: update tooltip, badge, sound, etc.
-  connectionStatusDot.title = `Status: ${connectionState}`;
+  connectButton.innerHTML = text[connectionState];
 }

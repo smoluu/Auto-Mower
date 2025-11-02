@@ -1,6 +1,7 @@
 use log::LevelFilter;
 
 mod state_manager;
+mod gamepad;
 
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 

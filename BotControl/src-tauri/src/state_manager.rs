@@ -1,24 +1,25 @@
 use std::{
     net::{ IpAddr, Ipv4Addr, SocketAddr, UdpSocket },
     os::linux::raw::stat,
-    sync::{ Arc, Mutex },
+    sync::{ Arc, Mutex, mpsc::{ self, Receiver, Sender, TryRecvError } },
     time::{ Duration, Instant },
 };
 use serde::{ Deserialize, Serialize };
-use tauri::{ AppHandle, Emitter, Manager };
+use tauri::{ App, AppHandle, Emitter, Manager };
 use log::{ info, warn, error };
 use std::thread;
-
+use crate::gamepad::{ self, ControlInputs, RobotMode };
 const UDP_CONNECTION_TIMEOUT: Duration = Duration::from_millis(2000); // If no packets are received for this time, return from UDP connection thread
 
 // State manager holding all app state
-#[derive(Clone, Serialize)]
+#[derive(Clone)]
 pub struct StateManager {
     pub connection: ConnectionStatus,
-    #[serde(skip)]
     pub socket: Arc<Mutex<UdpSocket>>,
+    pub udp_tx: Option<Sender<&'static [u8]>>,
     pub sensor_data: Option<SensorData>,
     pub settings: Settings,
+    pub control_inputs: ControlInputs,
 }
 
 impl StateManager {
@@ -26,16 +27,22 @@ impl StateManager {
         StateManager {
             connection: ConnectionStatus::Disconnected,
             socket: Arc::new(Mutex::new(UdpSocket::bind("0.0.0.0:0").unwrap())),
+            udp_tx: None,
             sensor_data: None,
             settings: Settings {
                 robot_address: Ipv4Addr::new(10, 66, 66, 50),
                 robot_port: 6969,
-                robot_mode: RobotMode::MANUAL,
                 camera_url: String::from("rtsp://localhost:8554"),
+            },
+            control_inputs: ControlInputs {
+                throttle: 0.0,
+                steering: 0.0,
+                mode: RobotMode::MANUAL,
             },
         }
     }
 }
+
 #[derive(Clone, Serialize)]
 pub enum SensorData {}
 
@@ -46,16 +53,11 @@ pub enum ConnectionStatus {
     Connecting,
     Disconnected,
 }
-#[derive(Clone, Deserialize, Serialize)]
-pub enum RobotMode {
-    MANUAL,
-    AUTOMATIC,
-}
+
 #[derive(Clone, Deserialize, Serialize)]
 pub struct Settings {
     robot_address: Ipv4Addr,
     robot_port: u32,
-    robot_mode: RobotMode,
     camera_url: String,
 }
 
@@ -128,25 +130,37 @@ pub fn connect_udp(address: String, port: u32, app_handle: AppHandle) -> Result<
                 return;
             }
         }
-        
+
         let _ = socket.set_nonblocking(true);
         state.connection = ConnectionStatus::Connected;
         app_handle_clone.emit("state_connection_update", ConnectionStatus::Connected).unwrap();
 
+        let (udp_tx, udp_rx) = mpsc::channel::<&'static [u8]>();
+        state.udp_tx = Some(udp_tx.clone());
+
         drop(state);
         drop(socket);
 
+        // Start Control input thread
+        let handle = thread::spawn(move || {
+            ControlInputs::start(udp_tx.clone());
+        });
+
         // Start Sending and Receiving data after ACK
-        
+
         let mut buffer = [0; 65536];
-        let mut last_packet_time = Instant::now();
-        
+        let mut last_packet_recv_time = Instant::now();
+        let mut last_loop = Instant::now();
+
         loop {
+            while last_loop.elapsed() < Duration::from_millis(1) {
+                std::thread::yield_now();
+            }
             let mut state_lock = state_arc_clone.lock().unwrap();
             let socket = socket_arc_clone.lock().unwrap();
 
             // Return if no packets are received for some time
-            if last_packet_time.elapsed() > UDP_CONNECTION_TIMEOUT {
+            if last_packet_recv_time.elapsed() > UDP_CONNECTION_TIMEOUT {
                 error!("No data received for {} ms", UDP_CONNECTION_TIMEOUT.as_millis());
                 state_lock.connection = ConnectionStatus::Disconnected;
                 app_handle_clone
@@ -155,9 +169,20 @@ pub fn connect_udp(address: String, port: u32, app_handle: AppHandle) -> Result<
                 return;
             }
 
+            // Read data from mpsc channel, Send to MowMaster
+            match udp_rx.try_recv() {
+                Ok(data) => {
+                    socket.send_to(&data, &dest);
+                }
+                Err(TryRecvError::Empty) => {}
+                Err(TryRecvError::Disconnected) => {
+                    error!("MPSC Channel disconnected");
+                }
+            }
+
             match socket.recv_from(&mut buffer) {
                 Ok((len, src)) => {
-                    last_packet_time = Instant::now();
+                    last_packet_recv_time = Instant::now();
                     info!("Received {:?} bytes", len);
                     app_handle_clone.emit("test", &buffer[0..len]).expect("Failed to emit data");
                 }
@@ -173,7 +198,7 @@ pub fn connect_udp(address: String, port: u32, app_handle: AppHandle) -> Result<
             }
             drop(state_lock);
             drop(socket);
-            thread::sleep(Duration::from_millis(10));
+            last_loop = Instant::now();
         }
     });
 
