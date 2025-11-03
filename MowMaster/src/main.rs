@@ -36,36 +36,43 @@ fn main() -> Result<(), Error> {
 
     // UDP socket for MowSense
     let mowsense_socket = Arc::new(Mutex::new(UdpSocket::bind("0.0.0.0:0")?));
-    mowsense_socket.lock().unwrap().set_broadcast(true).expect("Could not enable broadcast");
+    mowsense_socket.lock().unwrap().set_nonblocking(true).expect("Could not enable broadcast");
 
-    // Mspc channel for sending data between control loop and mow sense UDP connection
-    let (control_loop_ms_tx, control_loop_ms_rx) = mpsc::channel::<Vec<u8>>();
+    // Mspc channel for sending data between control loop and MowSense UDP connection
+    // Control loop to Mows sense
+    let (cl_to_ms_tx, cl_to_ms_rx) = mpsc::channel::<Vec<u8>>();
+    // MowSense to Control loop
+    let (ms_to_cl_tx, ms_to_cl_rx) = mpsc::channel::<Vec<u8>>();
 
     // Mspc channel for sending data between control loop and BotControl UDP connection
-    let (control_loop_bc_tx, control_loop_bc_rx) = mpsc::channel::<Vec<u8>>();
+    let (bc_to_cl_tx, bc_to_cl_rx) = mpsc::channel::<Vec<u8>>();
 
     // Control loop, receives data from BotControl and mowsense mpsc channels,
     thread::spawn(move || {
         let mut last_loop = Instant::now();
 
         loop {
-            if last_loop.elapsed() >= Duration::from_millis(CONTROL_LOOP_INTERVAL) {
-                continue;
-            }
             // Check for new data from BotControl mpsc channel
-            match control_loop_bc_rx.try_recv() {
+            match bc_to_cl_rx.try_recv() {
                 Ok(data) => {
-                    info!("CONTROL_LOOP -> Received {} bytes from ", data.len());
+                    // Send straight to Mowmaster channel
+                    let _ = cl_to_ms_tx.send(data);
                 }
                 Err(std::sync::mpsc::TryRecvError::Empty) => {} // Skip if no data
                 Err(e) => {
-                    error!("BOTCONTROL_SOCKET -> Error trying to receive data from mpsc channel {}", e);
+                    error!("CONTROL_LOOP -> Error trying to receive data from mpsc channel {}", e);
+                }
+            }
+            // Check for new data from MowSense mpsc channel
+            match ms_to_cl_rx.try_recv() {
+                Ok(data) => {}
+                Err(std::sync::mpsc::TryRecvError::Empty) => {} // Skip if no data
+                Err(e) => {
+                    error!("CONTROL_LOOP -> Error trying to receive data from mpsc channel {}", e);
                 }
             }
 
             // Check for data from MowSense mpsc channel
-
-            last_loop = Instant::now();
         }
     });
 
@@ -86,8 +93,6 @@ fn main() -> Result<(), Error> {
                 last_packet_recv.elapsed() <= Duration::from_secs(2) &&
                 dest.is_some()
             {
-                // Here we broadcast to a default address or some known BotControl address
-                // If you have a specific destination, replace with that
                 if let Err(e) = socket.send_to(b"KEEPALIVE", dest.unwrap()) {
                     error!("BOTCONTROL_SOCKET -> Could not send keepalive -> {}", e);
                 } else {
@@ -107,7 +112,7 @@ fn main() -> Result<(), Error> {
                         let _ = socket.send_to(&buf[..len], src);
                     } else {
                         // Send to Control loop
-                        control_loop_bc_tx.send((&buf[..len]).to_vec()).unwrap();
+                        bc_to_cl_tx.send((&buf[..len]).to_vec()).unwrap();
                     }
                 }
                 Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {} // Empty ignore
@@ -144,9 +149,11 @@ fn main() -> Result<(), Error> {
             }
 
             // Receive data from control loop mpsc channel, Send to MowSense
-            match control_loop_ms_rx.try_recv() {
+            match cl_to_ms_rx.try_recv() {
                 Ok(data) => {
                     // Data sending to MowSense
+                    info!("ASDASDADADS data -> {:?}", &data);
+
                     match socket.send_to(&data, &dest) {
                         Ok(size) => {
                             info!("MOWSENSE_SOCKET -> Sent {:?} bytes to MowSense", size);
@@ -157,23 +164,23 @@ fn main() -> Result<(), Error> {
                     }
                 }
                 Err(mpsc::TryRecvError::Empty) => {} // Empty ignore
-                Err(e) => error!("BOTCONTROL_SOCKET -> Channel receive error -> {}", e),
+                Err(e) => error!("MOWSENSE_SOCKET -> Channel receive error -> {}", e),
             }
 
             // Data receiving from MowSense,
             match socket.recv_from(&mut buf) {
                 Ok((len, src)) => {
-                    info!("MOWSENSE_SOCKET -> Received bytes -> {:?}", &buf[..len]);
+                    info!("MOWSENSE_SOCKET -> Received bytes -> {:?} from MowSense", &buf[..len]);
                     // send data to mspc
-                    let _ = control_loop_ms_tx.send((&buf[..len]).to_vec());
+                    let _ = ms_to_cl_tx.send((&buf[..len]).to_vec());
                 }
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {} // Empty ignore
                 Err(e) => {
                     error!("MOWSENSE_SOCKET -> Could not read from MowSense -> {}", e);
                 }
             }
 
             drop(socket);
-            thread::sleep(Duration::from_millis(MOWSENSE_CONNECTION_LOOP_INTERVAL));
         }
     });
 
