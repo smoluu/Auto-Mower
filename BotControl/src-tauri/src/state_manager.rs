@@ -166,6 +166,8 @@ pub fn connect_udp(address: String, port: u32, app_handle: AppHandle) -> Result<
         let mut buffer = [0; 65536];
         let mut last_packet_recv_time = Instant::now();
         let mut last_loop = Instant::now();
+        let mut last_keepalive = Instant::now();
+        let mut dest: Option<SocketAddr> = None;
 
         loop {
             while last_loop.elapsed() < Duration::from_millis(1) {
@@ -173,6 +175,19 @@ pub fn connect_udp(address: String, port: u32, app_handle: AppHandle) -> Result<
             }
             let mut state_lock = state_arc_clone.lock().unwrap();
             let socket = socket_arc_clone.lock().unwrap();
+
+            // Send keepalive every 1 second
+            if last_keepalive.elapsed() >= Duration::from_secs(1) && dest.is_some() {
+                // Here we broadcast to a default address or some known BotControl address
+                // If you have a specific destination, replace with that
+                if let Err(e) = socket.send_to(b"KEEPALIVE", dest.unwrap()) {
+                    error!("BOTCONTROL_SOCKET -> Could not send keepalive -> {}", e);
+                } else {
+                    info!("BOTCONTROL_SOCKET -> Sent keepalive");
+                }
+                last_keepalive = Instant::now();
+            }
+
 
             // Return if no packets are received for some time
             if last_packet_recv_time.elapsed() > UDP_CONNECTION_TIMEOUT {
@@ -190,7 +205,9 @@ pub fn connect_udp(address: String, port: u32, app_handle: AppHandle) -> Result<
             // Read data from mpsc channel, Send to MowMaster
             match udp_rx.try_recv() {
                 Ok(data) => {
-                    socket.send_to(&data, &dest);
+                    if Some(dest).is_some() {
+                        let _ = socket.send_to(&data, dest.unwrap());
+                    }
                 }
                 Err(TryRecvError::Empty) => {}
                 Err(TryRecvError::Disconnected) => {
@@ -200,6 +217,7 @@ pub fn connect_udp(address: String, port: u32, app_handle: AppHandle) -> Result<
 
             match socket.recv_from(&mut buffer) {
                 Ok((len, src)) => {
+                    dest = Some(src);
                     last_packet_recv_time = Instant::now();
                     info!("Received {:?} bytes", len);
                     app_handle_clone

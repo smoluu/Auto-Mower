@@ -76,11 +76,16 @@ fn main() -> Result<(), Error> {
         let mut buf = [0u8; 1024];
         let mut last_keepalive = Instant::now();
         let mut dest: Option<SocketAddr> = None;
+        let mut last_packet_recv = Instant::now();
         loop {
             let socket = botcontrol_socket.lock().unwrap();
 
             // Send keepalive every 1 second
-            if last_keepalive.elapsed() >= Duration::from_secs(1) && dest.is_some() {
+            if
+                last_keepalive.elapsed() >= Duration::from_secs(1) &&
+                last_packet_recv.elapsed() <= Duration::from_secs(2) &&
+                dest.is_some()
+            {
                 // Here we broadcast to a default address or some known BotControl address
                 // If you have a specific destination, replace with that
                 if let Err(e) = socket.send_to(b"KEEPALIVE", dest.unwrap()) {
@@ -95,6 +100,7 @@ fn main() -> Result<(), Error> {
             match socket.recv_from(&mut buf) {
                 Ok((len, src)) => {
                     info!("BOTCONTROL_SOCKET -> Received {len} bytes from {src}");
+                    last_packet_recv = Instant::now();
                     // Echo ACK back
                     if &buf[..len] == b"ACK" {
                         dest = Some(src);
