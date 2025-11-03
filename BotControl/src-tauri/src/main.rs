@@ -3,5 +3,4 @@
 
 fn main() {
     botcontrol_gui_lib::run();
-
 }

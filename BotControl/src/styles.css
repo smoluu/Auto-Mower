@@ -148,19 +148,19 @@
       z-index: 2;
     }
 
-    input { display: none; }
+    .toggle input { display: none; }
 
-    input:checked + .switch {
+    .toggle input:checked + .switch {
       background: #4CAF50;
     }
 
-    input:checked + .switch::before {
+    .toggle input:checked + .switch::before {
       content: 'AUTO';
       left: 12px;
       color: white;
     }
 
-    input:checked + .switch::after {
+    .toggle input:checked + .switch::after {
       transform: translateX(105px);
     }
 

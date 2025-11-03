@@ -7,6 +7,7 @@ import { Chart, ChartConfiguration, registerables } from "chart.js";
 import { PointCloud } from "./PointCloud";
 import { Toast } from "./Toast";
 import { listen } from "@tauri-apps/api/event";
+import { load, Store } from "@tauri-apps/plugin-store";
 // Register Chart.js components
 Chart.register(...registerables);
 
@@ -36,10 +37,15 @@ interface SensorData {
 }
 
 interface Settings {
-  udpPort: number;
-  rtspUrl: string;
-  brushSize: number;
+  robotIp: string;
+  robotPort: number;
+  cameraURL: string;
 }
+export const DEFAULT_SETTINGS = {
+  robotIp: "127.0.0.1",
+  robotPort: 6969,
+  cameraURL: "rtsp://localhost:8554",
+} satisfies Settings;
 
 // Tab switching
 const tabs = document.querySelectorAll<HTMLButtonElement>(".tab");
@@ -286,16 +292,46 @@ window.addEventListener("keypress", (e) => {
   }
 });
 
-// Settings save
+// Load Settings
+const loadSettings = async () => {
+  try {
+    const storage = await load("storage.json");
+    const savedSettings = await storage.get<Settings>("settings");
+    if (savedSettings) {
+      // Populate your form inputs
+      (document.getElementById("robot-ip") as HTMLInputElement).value = savedSettings.robotIp;
+      (document.getElementById("robot-port") as HTMLInputElement).value = savedSettings.robotPort.toString();
+      (document.getElementById("camera-url") as HTMLInputElement).value = savedSettings.cameraURL;
+      Toast.new("Settings loaded"); // Using your fixed Toast
+    } else {
+      // Save defaults
+      await storage.set("settings", DEFAULT_SETTINGS);
+    }
+  } catch (error) {
+    console.error("Failed to load settings:", error);
+    Toast.new("Failed to load settings", "error");
+  }
+};
+document.addEventListener("DOMContentLoaded", loadSettings);
+
 const saveSettingsBtn = document.getElementById("save-settings") as HTMLButtonElement;
 saveSettingsBtn.addEventListener("click", async () => {
   const settings: Settings = {
-    udpPort: parseInt((document.getElementById("udp-port") as HTMLInputElement).value),
-    rtspUrl: (document.getElementById("rtsp-url") as HTMLInputElement).value,
-    brushSize: parseFloat((document.getElementById("brush-size") as HTMLInputElement).value),
+    robotIp: (document.getElementById("robot-ip") as HTMLInputElement).value,
+    robotPort: parseInt((document.getElementById("robot-port") as HTMLInputElement).value),
+    cameraURL: (document.getElementById("camera-url") as HTMLInputElement).value,
   };
-  //await invoke("save_settings", settings);
-  alert("Settings saved");
+
+  try {
+    const storage = await load("storage.json");
+    await storage.set("settings", settings);
+    await storage.save();
+    Toast.new("Settings saved successfully!", "success");
+    console.log("", await storage.get("settings"));
+  } catch (error) {
+    console.error("Failed to save settings:", error);
+    Toast.new("Failed to save settings", "error");
+  }
 });
 
 // RTSP feed (placeholder)
@@ -306,21 +342,24 @@ cameraVideo.src = "http://localhost:8080/stream";
 
 const deviceConnectButton = document.querySelector("#device-connect-btn");
 deviceConnectButton?.addEventListener("click", async () => {
+  const storage = await load("storage.json");
+  const settings = await storage.get<Settings>("settings");
+
+  const dest = settings?.robotIp;
+  const port = settings?.robotPort;
   try {
     if (connectionState == "disconnected") {
-      let test = await invoke("connect_udp",{address: "10.66.66.50", port: 6969})
-      console.log("test", test)
+      let test = await invoke("connect_udp", { address: dest, port: port });
+      console.log("test", test);
     }
-
   } catch (e) {
-    console.log("Error connecting: ", e)
+    console.log("Error connecting: ", e);
   }
 });
 
-
 listen("state_connection_update", (e) => {
-  console.log(e.payload)
-  const state = e.payload
+  console.log(e.payload);
+  const state = e.payload;
   if (state === "disconnected" || state === "connecting" || state === "connected") {
     connectionState = state;
     updateConnectionUI();
@@ -337,8 +376,8 @@ function updateConnectionUI() {
   const text = {
     disconnected: "Connect",
     connecting: "Disconnect",
-    connected: "Disconnect"
-  }
+    connected: "Disconnect",
+  };
   connectionStatusDot.style.backgroundColor = colors[connectionState];
   connectButton.innerHTML = text[connectionState];
 }

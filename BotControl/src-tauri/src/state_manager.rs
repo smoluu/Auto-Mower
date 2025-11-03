@@ -1,14 +1,19 @@
-use std::{
-    net::{ IpAddr, Ipv4Addr, SocketAddr, UdpSocket },
-    os::linux::raw::stat,
-    sync::{ Arc, Mutex, mpsc::{ self, Receiver, Sender, TryRecvError } },
-    time::{ Duration, Instant },
-};
-use serde::{ Deserialize, Serialize };
-use tauri::{ App, AppHandle, Emitter, Manager };
-use log::{ info, warn, error };
+use crate::gamepad::{self, ControlInputs, RobotMode};
+use log::{error, info, warn};
+use serde::{Deserialize, Serialize};
+use tauri::http::uri::Port;
+use std::fmt::format;
 use std::thread;
-use crate::gamepad::{ self, ControlInputs, RobotMode };
+use std::{
+    net::{IpAddr, Ipv4Addr, SocketAddr, UdpSocket},
+    os::linux::raw::stat,
+    sync::{
+        mpsc::{self, Receiver, Sender, TryRecvError},
+        Arc, Mutex,
+    },
+    time::{Duration, Instant},
+};
+use tauri::{App, AppHandle, Emitter, Manager};
 const UDP_CONNECTION_TIMEOUT: Duration = Duration::from_millis(2000); // If no packets are received for this time, return from UDP connection thread
 
 // State manager holding all app state
@@ -67,14 +72,19 @@ pub type AppState = StateManager;
 pub fn connect_udp(address: String, port: u32, app_handle: AppHandle) -> Result<(), String> {
     let state = app_handle.state::<AppState>().inner();
     // check if already connected
-    if matches!(state.connection, ConnectionStatus::Connected | ConnectionStatus::Connecting) {
+    if matches!(
+        state.connection,
+        ConnectionStatus::Connected | ConnectionStatus::Connecting
+    ) {
         return Err("Already connecting or connected".to_string());
     }
     app_handle
         .emit("state_connection_update", ConnectionStatus::Connecting)
         .expect("Failed to emit state");
     let state_arc = Arc::new(Mutex::new(state.clone()));
-    let mut state_lock = state_arc.lock().map_err(|e| format!("failed to lock state {}", e))?;
+    let mut state_lock = state_arc
+        .lock()
+        .map_err(|e| format!("failed to lock state {}", e))?;
     state_lock.connection = ConnectionStatus::Connecting;
 
     let socket = state_lock.socket.lock().unwrap();
@@ -89,7 +99,9 @@ pub fn connect_udp(address: String, port: u32, app_handle: AppHandle) -> Result<
     let state_arc_clone = state_arc.clone();
     let socket_arc_clone = state_lock.socket.clone();
     let app_handle_clone = app_handle.clone();
-    let dest = "10.66.66.50:6969".parse::<SocketAddr>().unwrap();
+
+    let dest_string = format!("{}:{}",address, port);
+    let dest = dest_string.parse::<SocketAddr>().unwrap();
 
     thread::spawn(move || {
         info!("Started udp connection thread");
@@ -97,6 +109,7 @@ pub fn connect_udp(address: String, port: u32, app_handle: AppHandle) -> Result<
         let socket = socket_arc_clone.lock().unwrap();
 
         // Send ACK and listen for echo back
+        info!("Trying to send ACK to {dest}");
         match socket.send_to(b"ACK", &dest) {
             Ok(num_of_bytes) => {
                 info!("Sent {num_of_bytes} to MowMaster");
@@ -133,7 +146,9 @@ pub fn connect_udp(address: String, port: u32, app_handle: AppHandle) -> Result<
 
         let _ = socket.set_nonblocking(true);
         state.connection = ConnectionStatus::Connected;
-        app_handle_clone.emit("state_connection_update", ConnectionStatus::Connected).unwrap();
+        app_handle_clone
+            .emit("state_connection_update", ConnectionStatus::Connected)
+            .unwrap();
 
         let (udp_tx, udp_rx) = mpsc::channel::<&'static [u8]>();
         state.udp_tx = Some(udp_tx.clone());
@@ -161,7 +176,10 @@ pub fn connect_udp(address: String, port: u32, app_handle: AppHandle) -> Result<
 
             // Return if no packets are received for some time
             if last_packet_recv_time.elapsed() > UDP_CONNECTION_TIMEOUT {
-                error!("No data received for {} ms", UDP_CONNECTION_TIMEOUT.as_millis());
+                error!(
+                    "No data received for {} ms",
+                    UDP_CONNECTION_TIMEOUT.as_millis()
+                );
                 state_lock.connection = ConnectionStatus::Disconnected;
                 app_handle_clone
                     .emit("state_connection_update", ConnectionStatus::Disconnected)
@@ -184,7 +202,9 @@ pub fn connect_udp(address: String, port: u32, app_handle: AppHandle) -> Result<
                 Ok((len, src)) => {
                     last_packet_recv_time = Instant::now();
                     info!("Received {:?} bytes", len);
-                    app_handle_clone.emit("test", &buffer[0..len]).expect("Failed to emit data");
+                    app_handle_clone
+                        .emit("test", &buffer[0..len])
+                        .expect("Failed to emit data");
                 }
                 Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {}
                 Err(e) => {

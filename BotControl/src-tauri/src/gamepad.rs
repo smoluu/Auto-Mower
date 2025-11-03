@@ -1,7 +1,10 @@
-use std::{sync::mpsc, time::{ Duration, Instant }};
+use std::{
+    sync::mpsc,
+    time::{Duration, Instant},
+};
 
-use gilrs::{ Axis, Button, Event, EventType, Gilrs };
-use log::{ debug, info };
+use gilrs::{Axis, Button, Event, EventType, Gilrs};
+use log::{debug, info};
 
 static mut CONTROL_BUF: [u8; 13] = [0; 13];
 
@@ -16,7 +19,7 @@ impl RobotMode {
         let current = self as u8;
         let next = (current + 1) % 2;
         match next {
-            0 =>  RobotMode::MANUAL,
+            0 => RobotMode::MANUAL,
             1 => RobotMode::AUTOMATIC,
             _ => unreachable!(),
         }
@@ -54,7 +57,10 @@ impl ControlInputs {
                 continue;
             }
             // Examine new events
-            while let Some(Event { id, event, time, .. }) = gilrs.next_event() {
+            while let Some(Event {
+                id, event, time, ..
+            }) = gilrs.next_event()
+            {
                 //debug!("{:?} New event from {}: {:?}", time, id, event);
 
                 match event {
@@ -70,14 +76,12 @@ impl ControlInputs {
                             _ => {}
                         }
                     }
-                    EventType::AxisChanged(axis, value, _) => {
-                        match axis {
-                            Axis::LeftStickX => {
-                                inputs.steering = value;
-                            }
-                            _ => {}
+                    EventType::AxisChanged(axis, value, _) => match axis {
+                        Axis::LeftStickX => {
+                            inputs.steering = value;
                         }
-                    }
+                        _ => {}
+                    },
                     _ => {}
                 }
             }
@@ -90,7 +94,6 @@ impl ControlInputs {
                     CONTROL_BUF = ctrl_packet;
                     udp_tx.send(&CONTROL_BUF).ok();
                 }
-
             }
 
             // You can also use cached gamepad state
