@@ -1,10 +1,7 @@
-use std::{
-    sync::mpsc,
-    time::{Duration, Instant},
-};
+use std::{ sync::mpsc, time::{ Duration, Instant } };
 
-use gilrs::{Axis, Button, Event, EventType, Gilrs};
-use log::{debug, info};
+use gilrs::{ Axis, Button, Event, EventType, Gilrs };
+use log::{ debug, info };
 
 static mut CONTROL_BUF: [u8; 13] = [0; 13];
 
@@ -57,10 +54,7 @@ impl ControlInputs {
                 continue;
             }
             // Examine new events
-            while let Some(Event {
-                id, event, time, ..
-            }) = gilrs.next_event()
-            {
+            while let Some(Event { id, event, time, .. }) = gilrs.next_event() {
                 //debug!("{:?} New event from {}: {:?}", time, id, event);
 
                 match event {
@@ -73,15 +67,19 @@ impl ControlInputs {
                             Button::RightTrigger2 => {
                                 inputs.throttle = value;
                             }
+                            Button::LeftTrigger2 => {
+                                inputs.throttle -= value;
+                            }
                             _ => {}
                         }
                     }
-                    EventType::AxisChanged(axis, value, _) => match axis {
-                        Axis::LeftStickX => {
-                            inputs.steering = value;
+                    EventType::AxisChanged(axis, value, _) =>
+                        match axis {
+                            Axis::LeftStickX => {
+                                inputs.steering = value;
+                            }
+                            _ => {}
                         }
-                        _ => {}
-                    },
                     _ => {}
                 }
             }
