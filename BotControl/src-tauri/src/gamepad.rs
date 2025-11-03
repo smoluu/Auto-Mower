@@ -71,7 +71,7 @@ impl ControlInputs {
                                 inputs.mode = inputs.mode.next();
                             }
                             Button::RightTrigger2 => {
-                                inputs.steering = value;
+                                inputs.throttle = value;
                             }
                             _ => {}
                         }

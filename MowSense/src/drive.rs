@@ -22,7 +22,7 @@ impl<'d, L1: Pin, L2: Pin, R1: Pin, R2: Pin> Drive<'d, L1, L2, R1, R2> {
         left_in1: PinDriver<'d, L1, Output>,
         left_in2: PinDriver<'d, L2, Output>,
         right_in1: PinDriver<'d, R1, Output>,
-        right_in2: PinDriver<'d, R2, Output>,
+        right_in2: PinDriver<'d, R2, Output>
     ) -> Self {
         Self {
             left_in1,
@@ -59,7 +59,7 @@ impl<'d, L1: Pin, L2: Pin, R1: Pin, R2: Pin> Drive<'d, L1, L2, R1, R2> {
 
         self.left_speed = left_speed;
         self.right_speed = right_speed;
-        
+
         // set motor drive speed
         let max_duty = self.left_pwm.get_max_duty();
 
@@ -75,14 +75,10 @@ impl<'d, L1: Pin, L2: Pin, R1: Pin, R2: Pin> Drive<'d, L1, L2, R1, R2> {
     /// Uses max_speed_delta for linerally dampening motor control
     /// - `left_speed` Set speed from -1 to 1
     /// - `right_speed` Set speed from -1 to 1
-    pub fn set_speed_damped(
-        &mut self,
-        left_target_speed: f32,
-        right_target_speed: f32,
-    ) {
+    pub fn set_speed_damped(&mut self, left_target_speed: f32, right_target_speed: f32) {
         let delta_left = left_target_speed - self.left_speed;
         let delta_right = right_target_speed - self.right_speed;
-        
+
         self.left_speed += delta_left.clamp(-self.max_speed_delta, self.max_speed_delta);
         self.right_speed += delta_right.clamp(-self.max_speed_delta, self.max_speed_delta);
 
@@ -111,4 +107,20 @@ impl<'d, L1: Pin, L2: Pin, R1: Pin, R2: Pin> Drive<'d, L1, L2, R1, R2> {
         let _ = self.left_pwm.set_duty(left_duty);
         let _ = self.right_pwm.set_duty(right_duty);
     }
+}
+
+/// Convert arcade-drive style inputs (throttle + steering) into
+pub fn arcade_to_diff(throttle: f32, steering: f32) -> (f32, f32) {
+    // Clamp inputs to the allowed range – safety first!
+    let throttle = throttle.clamp(-1.0, 1.0);
+    let steering = steering.clamp(-1.0, 1.0);
+
+    let left = throttle + steering;
+    let right = throttle - steering;
+
+    let max = left.abs().max(right.abs());
+
+    let (left, right) = if max > 1.0 { (left / max, right / max) } else { (left, right) };
+
+    (left, right)
 }

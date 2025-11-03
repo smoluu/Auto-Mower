@@ -16,6 +16,8 @@ use log::{ self, Log, debug, error, info };
 use esp_idf_sys::*;
 use ota::init_ota;
 
+use crate::packets::Packet;
+
 mod ota;
 mod wifi;
 mod i2c;
@@ -25,6 +27,7 @@ mod bmp280;
 mod lidar;
 mod buzzer;
 mod drive;
+mod packets;
 
 static PIN_LED_RGB: i32 = 48;
 
@@ -217,33 +220,43 @@ fn main() -> anyhow::Result<()> {
         //drive.set_speed(1.0, 1.0);
 
         // Read udp packets
-        let mut buf = [0; 1400];
+        let mut buf = [0; 2048];
         match socket.recv_from(&mut buf) {
-            Ok((num_bytes_read, src)) => {
-                info!("Received bytes -> {:?}", &mut buf[..num_bytes_read]);
+            Ok((len, src)) => {
+                
+                let payload = &buf[..len];
 
+                if let Some(packet) = Packet::parse(payload) {
+                    match packet {
+                        Packet::Ctrl { throttle, steering, mode } => {
+                            info!("CTRL PACKET: {:?}", &payload);
+                            info!("THROTTLE {}", throttle);
+                            let (left_target, right_target) = drive::arcade_to_diff(throttle, steering);
+                            drive.set_speed(left_target, right_target);
+                        },
+                        Packet::Unknown { raw } => {
+                        info!("Unknown packet: {:02x?}", raw);
+                    }
+                    }
+                }
+                // info!("Received bytes -> {:?}", &mut buf[..num_bytes_read]);
                 // Echo back    
-                let _ = socket.send_to(&buf[..num_bytes_read], src);
-
+                // let _ = socket.send_to(&buf[..num_bytes_read], src);
             }
             Err(e) =>
                 match e.kind() {
-                    std::io::ErrorKind::WouldBlock => {
-                        // No data available, do something else or retry later
-                        std::thread::sleep(std::time::Duration::from_millis(100));
-                    }
+                    std::io::ErrorKind::WouldBlock => {} //  No data, skip
                     _ => {
                         info!("encountered IO error: {e}");
                         std::thread::sleep(std::time::Duration::from_millis(100));
                     }
                 }
         }
-        let dest: SocketAddr = "10.26.180.49:6969".parse().unwrap();
-        match socket.send_to(b"HELLOOONIGGAA", dest) {
-            Ok(n) => println!("Sent {} bytes", n),
-            Err(e) => eprintln!("Send error: {}", e),
-        }
-        thread::sleep(Duration::from_millis(500));
+        // let dest: SocketAddr = "10.26.180.49:6969".parse().unwrap();
+        // match socket.send_to(b"HELLOOONIGGAA", dest) {
+        //     Ok(n) => println!("Sent {} bytes", n),
+        //     Err(e) => eprintln!("Send error: {}", e),
+        // }
     }
 }
 fn print_memory_info() {
