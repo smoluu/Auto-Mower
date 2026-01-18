@@ -68,7 +68,7 @@ impl ControlInputs {
                                 inputs.throttle = value;
                             }
                             Button::LeftTrigger2 => {
-                                inputs.throttle -= value;
+                                inputs.throttle = -value;
                             }
                             _ => {}
                         }

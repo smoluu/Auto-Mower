@@ -1,4 +1,9 @@
-use std::{ net::{SocketAddr, UdpSocket}, sync::{ Arc, Mutex }, thread, time::Duration };
+use std::{
+    net::{ SocketAddr, UdpSocket },
+    sync::{ Arc, Mutex },
+    thread,
+    time::{ Duration, Instant },
+};
 use esp_idf_hal::{
     can::AsyncCanDriver,
     gpio::{ self, AnyIOPin, AnyOutputPin, Output, PinDriver, Pins },
@@ -9,10 +14,15 @@ use esp_idf_hal::{
     uart,
     units::Hertz,
 };
-use esp_idf_svc::{ eventloop::EspSystemEventLoop, nvs::EspDefaultNvsPartition, wifi::EspWifi };
+use esp_idf_svc::{
+    eventloop::EspSystemEventLoop,
+    nvs::EspDefaultNvsPartition,
+    timer::EspTimerService,
+    wifi::{ AsyncWifi, BlockingWifi, EspWifi },
+};
 use esp_idf_hal::i2c::*;
 
-use log::{ self, Log, debug, error, info };
+use log::{ self, Log, debug, error, info, warn };
 use esp_idf_sys::*;
 use ota::init_ota;
 
@@ -27,11 +37,14 @@ mod bmp280;
 mod lidar;
 mod buzzer;
 mod drive;
+mod mower;
 mod packets;
 
 static PIN_LED_RGB: i32 = 48;
 
 const PI: f32 = 3.141592;
+
+const PNTT_PACKET_INTERVAL: Duration = Duration::from_millis(50);
 
 // Sensor i2c adresses
 static SENSOR_ADDR_GY273: u8 = 0x2c;
@@ -54,13 +67,16 @@ fn main() -> anyhow::Result<()> {
 
     //  Wifi setup
     let sys_loop = EspSystemEventLoop::take().unwrap();
+    let mut timer_service = EspTimerService::new().unwrap();
     let nvs = EspDefaultNvsPartition::take().ok();
-    let mut wifi = EspWifi::new(peripherals.modem, sys_loop.clone(), nvs)?;
-    wifi = wifi::wifi_connect(wifi).unwrap();
+    let wifi_driver = EspWifi::new(peripherals.modem, sys_loop.clone(), nvs)?;
+    let wifi_blocking = BlockingWifi::wrap(wifi_driver, sys_loop)?;
+    let wifi = wifi::wifi_ap_setup(wifi_blocking)?;
 
     let socket = UdpSocket::bind("0.0.0.0:6968")?;
     socket.set_nonblocking(true)?;
-    socket.set_broadcast(true);
+    let mut last_heartbeat = Instant::now();
+    let heartbeat_interval = Duration::from_millis(80); // 80 ms → ~12.5 Hz, perfect
 
     // UART driver setup
     // https://docs.esp-rs.org/esp-idf-hal/esp_idf_hal/uart/index.html
@@ -136,7 +152,7 @@ fn main() -> anyhow::Result<()> {
         buzzer::play(&mut buzzer_pwm, &mut buzzer_timer, buzzer::STARTUP);
     });
 
-    // L298N setup
+    // L298N Wheel Driver setup
     let motor_left_in1 = PinDriver::output(peripherals.pins.gpio11)?;
     let motor_left_in2 = PinDriver::output(peripherals.pins.gpio12)?;
     let motor_right_in1 = PinDriver::output(peripherals.pins.gpio36)?;
@@ -164,13 +180,28 @@ fn main() -> anyhow::Result<()> {
         motor_left_in1,
         motor_left_in2,
         motor_right_in1,
-        motor_right_in2
+        motor_right_in2,
+        0.1
     );
 
-    drive.max_speed_delta = 0.1;
+    // // Setup BTS7960 / Mower blade motor
+    // let motor_l_en = PinDriver::output(peripherals.pins.gpio1)?;
+    // let motor_r_en = PinDriver::output(peripherals.pins.gpio2)?;
+    // let mower_timer_config = TimerConfig::new()
+    //     .frequency(Hertz(20_000))
+    //     .resolution(esp_idf_hal::ledc::Resolution::Bits10);
+    // let mower_timer = LedcTimerDriver::new(peripherals.ledc.timer2, &mower_timer_config)?;
+    // let mower_pwm = LedcDriver::new(peripherals.ledc.channel3, &mower_timer, peripherals.pins.gpio4)?;
+    // let mut mower = mower::Mower::new(mower_pwm, motor_l_en, motor_r_en, 0.1);
+
+    // mower.set_speed(0.7);
+    // thread::sleep(Duration::from_millis(2000));
+    // mower.set_speed(1.0);
+    // thread::sleep(Duration::from_millis(2000));
+    // mower.set_speed(0.0);
 
     // Check OTA partitions
-    info!("Init ota: {:?}", init_ota()?);
+    //info!("Init ota: {:?}", init_ota()?);
 
     // Start OTA firmware update polling
     // let ota = match start_ota_polling(OTA_SERVER_URL, FIRMWARE_VERSION, OTA_SERVER_POLLING_RATE) {
@@ -178,70 +209,71 @@ fn main() -> anyhow::Result<()> {
     //     Err(e) => panic!("OTA polling start failed => {}", e),
     // };
 
+    let mut mowmaster_src: Option<SocketAddr> = None;
+    let mut last_pntt_instant: Instant = Instant::now();
     loop {
         //print_memory_info();
-        // if wifi.is_connected().map_err(|e| anyhow::anyhow!("Connection check failed: {}", e))? {
-        //     if let Ok(ip_info) = wifi.sta_netif().get_ip_info() {
-        //         info!("Wi-Fi is active. IP: {}", ip_info.ip);
-        //     }
-        // } else {
-        //     info!("Wi-Fi disconnected, attempting reconnect...");
-        //     wifi.connect();
-        //     while !wifi.is_connected().map_err(|e| anyhow::anyhow!("Reconnect failed: {}", e))? {
-        //         thread::sleep(Duration::from_millis(500));
-        //     }
-        //     let ip_info = wifi.sta_netif().get_ip_info()?;
-        //     info!("Reconnected! IP: {}", ip_info.ip);
-        // }
+
+        // Time stamp for PNTT packets
+        let timestamp_us = unsafe { esp_timer_get_time() };
 
         // Reading GY273
         let gy273_reading = gy273.read(&mut i2c);
-        info!("Heading: {:.2}", gy273_reading.heading);
+        //info!("Heading: {:.2}", gy273_reading.heading);
 
         // Reading MPU
         let mpu_reading: mpu::MPUReading = mpu.read(&mut i2c);
-        info!(
-            "Roll: {:.2} Pitch: {:.2} Temp: {:.2}°C, Acc: {:.2}G",
-            mpu_reading.roll,
-            mpu_reading.pitch,
-            mpu_reading.temperature_c,
-            mpu_reading.acc_total
-        );
+        // info!(
+        // "Roll: {:.2} Pitch: {:.2} Temp: {:.2}°C, Acc: {:.2}G",
+        // mpu_reading.roll,
+        // mpu_reading.pitch,
+        // mpu_reading.temperature_c,
+        // mpu_reading.acc_total
+        // );
 
         // Reading bmp280
         let bmp_reading: bmp280::Bmp280Reading = bmp280.read(&mut i2c);
-        info!(
-            "BMP280 -> Pressure: {}Pa Temperature: {}°C",
-            bmp_reading.pressure,
-            bmp_reading.temperature
-        );
+        // info!(
+        // "BMP280 -> Pressure: {}Pa Temperature: {}°C",
+        // bmp_reading.pressure,
+        // bmp_reading.temperature
+        // );
 
         // Reading lidar
         //drive.set_speed(1.0, 1.0);
 
-        // Read udp packets
         let mut buf = [0; 2048];
+        // Receive UDP packets from MowMaster
         match socket.recv_from(&mut buf) {
             Ok((len, src)) => {
-                
                 let payload = &buf[..len];
+                info!("Received {} bytes from {}: {:?}", len, src, payload);
+                mowmaster_src = Some(src);
 
                 if let Some(packet) = Packet::parse(payload) {
                     match packet {
                         Packet::Ctrl { throttle, steering, mode } => {
                             info!("CTRL PACKET: {:?}", &payload);
                             info!("THROTTLE {}", throttle);
-                            let (left_target, right_target) = drive::arcade_to_diff(throttle, steering);
+                            let (left_target, right_target) = drive::arcade_to_diff(
+                                throttle,
+                                steering
+                            );
                             drive.set_speed(left_target, right_target);
-                        },
+                        }
+                        Packet::Keepalive {} => {
+                            // Echo keepalive
+                            info!("KEEPALIVE received - echoing back");
+                            let _ = socket.send_to(b"KEEPALIVE", src);
+                        }
                         Packet::Unknown { raw } => {
-                        info!("Unknown packet: {:02x?}", raw);
-                    }
+                            info!("Unknown packet: {:02x?}", raw);
+                        }
+                        _ => {
+                            info!("Unknown packet");
+                        }
                     }
                 }
-                // info!("Received bytes -> {:?}", &mut buf[..num_bytes_read]);
-                // Echo back    
-                // let _ = socket.send_to(&buf[..num_bytes_read], src);
             }
             Err(e) =>
                 match e.kind() {
@@ -252,23 +284,31 @@ fn main() -> anyhow::Result<()> {
                     }
                 }
         }
-        // let dest: SocketAddr = "10.26.180.49:6969".parse().unwrap();
-        // match socket.send_to(b"HELLOOONIGGAA", dest) {
-        //     Ok(n) => println!("Sent {} bytes", n),
-        //     Err(e) => eprintln!("Send error: {}", e),
-        // }
-    }
-}
-fn print_memory_info() {
-    unsafe {
-        let free_heap = esp_get_free_heap_size();
-        let min_heap = esp_get_minimum_free_heap_size();
-        let free_internal = heap_caps_get_free_size(0); // MALLOC_CAP_8BIT | MALLOC_CAP_INTERNAL
-        let free_psram = heap_caps_get_free_size(0x1000_0000); // MALLOC_CAP_SPIRAM
 
-        println!("Free heap: {} bytes", free_heap);
-        println!("Min free heap: {} bytes", min_heap);
-        println!("Free internal heap: {} bytes", free_internal);
-        println!("Free PSRAM: {} bytes", free_psram);
+        // Send UDP packets to MowMaster if destination src is set
+
+        if let Some(src) = mowmaster_src {
+            // Create PNTT packet
+
+            if last_pntt_instant.elapsed() >= PNTT_PACKET_INTERVAL {
+                let packet = Packet::PNTT {
+                    heading: gy273_reading.heading,
+                    roll: mpu_reading.roll,
+                    pitch: mpu_reading.pitch,
+                    temp_c_0: mpu_reading.temperature_c,
+                    acc_total: mpu_reading.acc_total,
+                    pressure: bmp_reading.pressure,
+                    temp_c_1: bmp_reading.temperature,
+                    timestamp_us: timestamp_us,
+                };
+                if let Some(bytes) = packet.to_bytes() {
+                    // Send PNTT packet
+                    if let Err(e) = socket.send_to(&bytes, src) {
+                        warn!("Send failed: {} - dropping packet", e);
+                    }
+                    last_pntt_instant = Instant::now();
+                }
+            }
+        }
     }
 }

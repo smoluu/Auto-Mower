@@ -14,7 +14,7 @@ use std::{
     time::{Duration, Instant},
 };
 use tauri::{App, AppHandle, Emitter, Manager};
-const UDP_CONNECTION_TIMEOUT: Duration = Duration::from_millis(2000); // If no packets are received for this time, return from UDP connection thread
+const UDP_CONNECTION_TIMEOUT: Duration = Duration::from_millis(5000); // If no packets are received for this time, return from UDP connection thread
 
 // State manager holding all app state
 #[derive(Clone)]

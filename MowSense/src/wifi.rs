@@ -1,49 +1,42 @@
 use log::info;
-use std::thread;
-use std::time::Duration;
 use anyhow::{ Ok, Result };
-use esp_idf_svc::wifi::{ EspWifi, AuthMethod, ClientConfiguration, Configuration };
-use esp_idf_svc::eventloop::EspSystemEventLoop;
-use esp_idf_svc::nvs::EspDefaultNvsPartition;
-use esp_idf_svc::hal::prelude::Peripherals;
-use std::sync::mpsc::{ channel };
+use esp_idf_svc::wifi::{ AccessPointConfiguration, AuthMethod, BlockingWifi, Configuration, EspWifi };
 
-pub fn wifi_connect(mut wifi: EspWifi<'static>) -> Result<EspWifi<'static>, anyhow::Error> {
+pub fn wifi_ap_setup(
+    mut wifi: BlockingWifi<EspWifi<'static>>
+) -> Result<BlockingWifi<EspWifi<'static>>> {
     let ssid = env!("WIFI_SSID");
     let password = env!("WIFI_PASSWORD");
 
     // Wi-Fi configuration
-    let config = Configuration::Client(ClientConfiguration {
+    let ap_config = Configuration::AccessPoint(AccessPointConfiguration {
         ssid: ssid.parse().unwrap(),
-        password: password.parse().unwrap(), // Replace with your Wi-Fi password
+        password: password.parse().unwrap(),
         auth_method: AuthMethod::WPA2Personal,
+        channel: 11,
+        ssid_hidden: false,
         ..Default::default()
     });
 
-    // Channels for IP info
-    let (ip_sender, ip_receiver) = channel();
-
     // Apply configuration
-    wifi.set_configuration(&config)?;
+    wifi.set_configuration(&ap_config)?;
+    info!("Calling start()...");
     wifi.start()?;
-    info!("Wi-Fi started, connecting...");
+    info!("start() finished → WiFi should be starting");
 
-    // Wait for connection
-    while !wifi.is_started().map_err(|e| anyhow::anyhow!("Wi-Fi start failed: {}", e))? {
-        thread::sleep(Duration::from_millis(500));
-    }
+    info!("Waiting for netif up...");
+    wifi.wait_netif_up()?;
+    info!("netif is up!");
+    
+    let ip_info = wifi.wifi().ap_netif().get_ip_info()?;
 
-    wifi.connect()?;
-    info!("Wifi connecting...");
-
-    // Check if connected and try to reconnect every 2.5 seconds
-    while !wifi.is_connected().map_err(|e| anyhow::anyhow!("Connection failed: {}", e))? {
-        thread::sleep(Duration::from_millis(5000));
-    }
-
-    let ip_info = wifi.sta_netif().get_ip_info()?;
-    ip_sender.send(ip_info)?;
-    info!("Connected to Wi-Fi! IP: {}", ip_info.ip);
+    info!(
+        "Wi-Fi AP started: \nIP: {} , Subnet: {} , DNS: {:?} , SDNS {:?}",
+        ip_info.ip,
+        ip_info.subnet,
+        ip_info.dns,
+        ip_info.secondary_dns
+    );
 
     Ok(wifi)
 }

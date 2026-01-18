@@ -19,7 +19,7 @@ CONFIG_ESPTOOLPY_FLASHSIZE_4MB=n
 # Enable custom OTA partition table
 CONFIG_PARTITION_TABLE_OTA=y
 CONFIG_PARTITION_TABLE_CUSTOM=y
-CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="/home/smolu/Repos/Auto-Mower/MowSense/partitions.csv"
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="/home/Smolu/Repos/Auto-Mower/MowSense/partitions.csv"
 
 # Disable conflicting partition tables
 CONFIG_PARTITION_TABLE_SINGLE_APP=n

@@ -14,7 +14,7 @@ Chart.register(...registerables);
 let isFocus = true;
 let stopRender = false;
 let clock = new THREE.Clock();
-const targetFPS = 120;
+const targetFPS = 30;
 const blurTargetFps = 15; // Used to limit renderer fps when app is not in focus
 let rendererTargetFps = targetFPS; // Used to limit renderer frames per second
 let delta = 0; // Renderer frame time

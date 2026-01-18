@@ -22,6 +22,9 @@ default = []
 
 experimental = ["esp-idf-svc/experimental"]
 
+[package.metadata.espflash]
+flash_size = "16MB"
+
 [dependencies]
 log = "0.4"
 esp-idf-sys = { version = "0.36.1"}
