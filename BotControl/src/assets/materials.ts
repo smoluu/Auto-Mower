@@ -16,7 +16,7 @@ paletteTexture.needsUpdate = true;
 // Custom shader material for smooth, circular points with color palette
 export const pointMaterial = new ShaderMaterial({
   uniforms: {
-    pointSize: { value: 0.05 },
+    pointSize: { value: 0.01 },
     palette: { value: paletteTexture },
   },
   vertexShader: `

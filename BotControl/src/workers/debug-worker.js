@@ -12,9 +12,9 @@ self.onmessage = (event) => {
     const colorIndices = new Uint8Array(batchSize);
 
     for (let i = 0; i < batchSize; i++) {
-      positions[i * 3] = (Math.random() - 0.5) * 200;
-      positions[i * 3 + 1] = Math.random() * 10;
-      positions[i * 3 + 2] = (Math.random() - 0.5) * 200;
+      positions[i * 3] = (Math.random() - 0.5) * 100;
+      positions[i * 3 + 1] = Math.random() * 0.1;
+      positions[i * 3 + 2] = (Math.random() - 0.5) * 100;
       colorIndices[i] = 0;
     }
 

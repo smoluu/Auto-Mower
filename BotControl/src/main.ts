@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
+import { GLTFLoader } from "three/examples/jsm/Addons.js";
 import { invoke } from "@tauri-apps/api/core";
 import Stats from "stats.js";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -8,8 +9,12 @@ import { PointCloud } from "./PointCloud";
 import { Toast } from "./Toast";
 import { listen } from "@tauri-apps/api/event";
 import { load, Store } from "@tauri-apps/plugin-store";
+
 // Register Chart.js components
 Chart.register(...registerables);
+
+// GLTF Loader
+const loader = new GLTFLoader();
 
 let isFocus = true;
 let stopRender = false;
@@ -110,17 +115,20 @@ renderer.setSize(1080, 720);
 
 // Camera setup
 const controls = new OrbitControls(camera, renderer.domElement);
+controls.minDistance = 0.1
+controls.maxDistance = 100
 controls.enableDamping = true;
-controls.dampingFactor = 0.1;
+controls.dampingFactor = 0.3;
 controls.rotateSpeed = 0.5;
 controls.panSpeed = 0.5;
-camera.position.y = 100;
-camera.position.z = 0;
+camera.position.y = 1;
+camera.position.z = -1;
+scene.add(new THREE.AmbientLight(0xffffff, 1));
 
 // Axis  & Grid helper
 const axesHelper = new THREE.AxesHelper(999);
 scene.add(axesHelper);
-scene.add(new THREE.GridHelper(500, 500));
+scene.add(new THREE.GridHelper(100, 100));
 
 //  Stats setup
 const stats = new Stats();
@@ -134,6 +142,19 @@ stats.dom.style.left = "0px";
 const pointCloud = new PointCloud();
 scene.add(pointCloud.points);
 pointCloud.debugWorker.postMessage({ pointCount: 1_000_000 });
+
+// Load Mower
+loader.load("models/mower.glb", function(gltf) {
+  const model = gltf.scene;
+
+  model.scale.multiplyScalar(0.001);
+  // Center model
+  var box = new THREE.Box3().setFromObject(model);
+  const center = box.getCenter(new THREE.Vector3());
+  model.position.sub(center);
+
+  scene.add(model);
+});
 
 // App not in focus
 getCurrentWindow().listen("tauri://blur", () => {
