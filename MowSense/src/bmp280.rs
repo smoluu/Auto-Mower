@@ -1,5 +1,4 @@
-use anyhow::{ Ok };
-use esp_idf_hal::i2c::{ I2cDriver };
+use esp_idf_hal::i2c::{ I2cDriver, I2cError };
 use log::info;
 
 pub struct Bmp280Reading {
@@ -101,7 +100,7 @@ impl Bmp280 {
         Ok(())
     }
 
-    pub fn read(&mut self, i2c: &mut I2cDriver) -> Bmp280Reading {
+    pub fn read(&mut self, i2c: &mut I2cDriver) -> Result<Bmp280Reading, anyhow::Error> {
         // BMP280 reading
         /* Register 0xF7–0xFC: BMP280 Data Registers
        0xF7–0xF9: Pressure (MSB, LSB, XLSB, 20-bit)
@@ -109,17 +108,27 @@ impl Bmp280 {
        Read 6 bytes for raw pressure and temperature ADC values
         */
         let mut buf = [0u8; 6];
-        i2c.write_read(self.addr, &[0xf7], &mut buf, 100).unwrap();
-        // Combine bytes
-        let adc_p = ((buf[0] as u32) << 12) | ((buf[1] as u32) << 4) | ((buf[2] as u32) >> 4);
-        let adc_t = ((buf[3] as u32) << 12) | ((buf[4] as u32) << 4) | ((buf[5] as u32) >> 4);
+        match i2c.write_read(self.addr, &[0xf7], &mut buf, 100) {
+            Ok(_) => {
+                // Combine bytes
+                let adc_p =
+                    ((buf[0] as u32) << 12) | ((buf[1] as u32) << 4) | ((buf[2] as u32) >> 4);
+                let adc_t =
+                    ((buf[3] as u32) << 12) | ((buf[4] as u32) << 4) | ((buf[5] as u32) >> 4);
 
-        //info!("BMP280_RAW -> p:{adc_p} t:{adc_t}");
+                //info!("BMP280_RAW -> p:{adc_p} t:{adc_t}");
 
-        let temperature: f32 = self.compensate_temperature(adc_t);
-        let pressure: f32 = self.compensate_pressure(adc_p);
+                let temperature: f32 = self.compensate_temperature(adc_t);
+                let pressure: f32 = self.compensate_pressure(adc_p);
 
-        Bmp280Reading { pressure: pressure, temperature: temperature }
+                Ok(Bmp280Reading { pressure: pressure, temperature: temperature })
+            }
+            Err(e) => {
+                eprintln!("I2C read failed: {:?}", e);
+
+                Err(anyhow::anyhow!(e))
+            }
+        }
     }
 
     /* Compensate BMP280 pressure

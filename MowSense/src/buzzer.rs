@@ -1,5 +1,5 @@
-use std::{thread::sleep, time::Duration};
-use esp_idf_hal::{ledc::{LedcDriver, LedcTimerDriver}, units::Hertz};
+use std::{ sync::mpsc, thread::sleep, time::Duration };
+use esp_idf_hal::{ ledc::{ LedcDriver, LedcTimerDriver }, units::Hertz };
 
 pub fn play(
     buzzer: &mut LedcDriver,
@@ -17,11 +17,30 @@ pub fn play(
     }
     buzzer.set_duty(0).unwrap(); // Final silence
 }
+pub enum Sound {
+    STARTUP,
+    WARNING_MOWER_ENABLED,
+    WARNING_MOWER_DISABLED
+}
 
-pub static STARTUP: &[(u32, u32)] = &[
-    (523,  200),  // C5
-    (659,  200),  // E5
-    (784,  300),  // G5
-    (1047, 400),  // C6  – warm resolve
-    (0,    100),
+pub const STARTUP: &[(u32, u32)] = &[
+    (523, 200), // C5
+    (659, 200), // E5
+    (784, 300), // G5
+    (1047, 400), // C6  – warm resolve
+    (0, 100),
+];
+
+pub const WARNING_MOWER_ENABLED: &[(u32, u32)] = &[
+    (500, 100), // Low start
+    (600, 100), // Rising
+    (700, 100), // Rising
+    (800, 200), // Peak
+];
+
+pub const WARNING_MOWER_DISABLED: &[(u32, u32)] = &[
+    (800, 100), // High start
+    (700, 100), // Falling
+    (600, 100), // Falling
+    (500, 200), // Low end
 ];

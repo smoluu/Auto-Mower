@@ -7,6 +7,9 @@ pub struct MPUReading {
     pub roll: f32,
     pub pitch: f32,
     pub temperature_c: f32,
+    pub acc_x: f32,
+    pub acc_y: f32,
+    pub acc_z: f32,
     pub acc_total: f32
 }
 
@@ -130,6 +133,6 @@ impl MPU {
             PI;
 
 
-        MPUReading { roll, pitch, temperature_c, acc_total }
+        MPUReading { roll, pitch, temperature_c, acc_x: acc_x_robot, acc_y: acc_y_robot, acc_z: acc_z_robot, acc_total }
     }
 }

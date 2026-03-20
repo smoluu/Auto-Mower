@@ -2,9 +2,18 @@ use anyhow::{ Ok };
 use esp_idf_hal::i2c::{ I2cDriver };
 use log::info;
 const PI: f32 = 3.141592;
-
+#[derive(Clone)]
+/// # Fields
+/// - `x` (`f32`) - West.
+/// - `y` (`f32`) - Down.
+/// - `z` (`f32`) - South.
+/// ```
 pub struct GY273Reading {
     pub heading: f32,
+    pub tilt_compensated_heading: f32,
+    pub x: f32,
+    pub y: f32,
+    pub z: f32,
 }
 
 pub struct GY273 {
@@ -43,9 +52,17 @@ impl GY273 {
         let y = i16::from_le_bytes([buf[2], buf[3]]) as f32;
         let z = i16::from_le_bytes([buf[4], buf[5]]) as f32;
 
-        let heading = (y.atan2(-z) * 180.0) / PI;
+        let heading = (x.atan2(-z) * 180.0) / PI;
         let heading = (heading + 360.0) % 360.0;
 
-        GY273Reading { heading }
+        GY273Reading { heading: heading, x, y, z, tilt_compensated_heading: 0.0 }
+    }
+}
+
+impl GY273Reading {
+
+
+    pub fn tilt_compensate(&mut self, acc_pitch: f32, acc_roll:f32) {
+        todo!()
     }
 }

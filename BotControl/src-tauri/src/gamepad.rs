@@ -1,9 +1,8 @@
 use std::{ sync::mpsc, time::{ Duration, Instant } };
-
 use gilrs::{ Axis, Button, Event, EventType, Gilrs };
 use log::{ debug, info };
 
-static mut CONTROL_BUF: [u8; 13] = [0; 13];
+static mut CONTROL_BUF: [u8; 18] = [0; 18];
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[repr(u8)]
@@ -28,6 +27,8 @@ pub struct ControlInputs {
     pub throttle: f32, // 0.0 to 1.0
     pub steering: f32, // -1.0 to 1.0
     pub mode: RobotMode,
+    pub mower_ena: u8,
+    pub mower_speed: f32,
 }
 
 impl ControlInputs {
@@ -36,6 +37,8 @@ impl ControlInputs {
             throttle: 0.0,
             steering: 0.0,
             mode: RobotMode::MANUAL,
+            mower_ena: 0,
+            mower_speed: 0.0,
         };
         let mut last_inputs = inputs;
 
@@ -44,7 +47,7 @@ impl ControlInputs {
         for (_id, gamepad) in gilrs.gamepads() {
             println!("{} is {:?}", gamepad.name(), gamepad.power_info());
         }
-        const loop_interval: f32 = 1.0 / 60.0; // In seconds
+        const loop_interval: f32 = 1.0 / 100.0; // In seconds
 
         let mut active_gamepad = None;
         let mut last_loop = Instant::now();
@@ -73,10 +76,23 @@ impl ControlInputs {
                             _ => {}
                         }
                     }
+
+                    EventType::ButtonPressed(button,value, ) => {
+                        match button {
+                            Button::RightThumb => {
+                                inputs.mower_ena ^= 1;
+                                debug!(" {}", inputs.mower_ena);
+                            }
+                            _ => {}
+                        }
+                    }
                     EventType::AxisChanged(axis, value, _) =>
                         match axis {
                             Axis::LeftStickX => {
                                 inputs.steering = value;
+                            }
+                            Axis::RightStickY => {
+                                inputs.mower_speed = value.max(0.0)
                             }
                             _ => {}
                         }
@@ -85,13 +101,13 @@ impl ControlInputs {
             }
 
             if inputs != last_inputs {
-                last_inputs = inputs;
                 let ctrl_packet = inputs.to_packet();
                 debug!("CTRL_PACKET -> {:?}", &ctrl_packet);
                 unsafe {
                     CONTROL_BUF = ctrl_packet;
                     udp_tx.send(&CONTROL_BUF).ok();
                 }
+                last_inputs = inputs;
             }
 
             // You can also use cached gamepad state
@@ -106,13 +122,15 @@ impl ControlInputs {
     }
 
     /// This function creates Control input packets ready for sending.
-    pub fn to_packet(&self) -> [u8; 13] {
-        let mut packet = [0u8; 13];
+    pub fn to_packet(&self) -> [u8; 18] {
+        let mut packet = [0u8; 18];
         // HEADER
         packet[0..4].copy_from_slice(b"CTRL");
         packet[4..8].copy_from_slice(&self.throttle.to_le_bytes());
         packet[8..12].copy_from_slice(&self.steering.to_le_bytes());
         packet[12] = self.mode as u8;
+        packet[13] = self.mower_ena as u8;
+        packet[14..18].copy_from_slice(&self.mower_speed.to_le_bytes());
 
         packet
     }

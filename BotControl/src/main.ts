@@ -27,6 +27,10 @@ let connectionState: "disconnected" | "connecting" | "connected" = "disconnected
 const connectionStatusDot = document.querySelector("#connectionStatusDot") as HTMLDivElement;
 const connectButton = document.querySelector("#device-connect-btn") as HTMLDivElement;
 
+//MOWER
+let mowerGroup = new THREE.Group();
+let mowerModel: THREE.Group | null = null;
+
 enum CanvasTool {
   None = "none",
   Paint = "paint",
@@ -115,8 +119,8 @@ renderer.setSize(1080, 720);
 
 // Camera setup
 const controls = new OrbitControls(camera, renderer.domElement);
-controls.minDistance = 0.1
-controls.maxDistance = 100
+controls.minDistance = 0.1;
+controls.maxDistance = 100;
 controls.enableDamping = true;
 controls.dampingFactor = 0.3;
 controls.rotateSpeed = 0.5;
@@ -143,18 +147,23 @@ const pointCloud = new PointCloud();
 scene.add(pointCloud.points);
 pointCloud.debugWorker.postMessage({ pointCount: 1_000_000 });
 
-// Load Mower
-loader.load("models/mower.glb", function(gltf) {
-  const model = gltf.scene;
+// Load Mower model
+scene.add(mowerGroup);
+const mower = loader.load("models/mower.glb", function (gltf) {
+  mowerModel = gltf.scene;
 
-  model.scale.multiplyScalar(0.001);
+  mowerModel.scale.multiplyScalar(0.001);
   // Center model
-  var box = new THREE.Box3().setFromObject(model);
+  var box = new THREE.Box3().setFromObject(mowerModel);
   const center = box.getCenter(new THREE.Vector3());
-  model.position.sub(center);
-
-  scene.add(model);
+  mowerModel.position.sub(center);
+  mowerModel.rotation.y = THREE.MathUtils.degToRad(0);
+  mowerGroup.add(mowerModel);
 });
+
+function animate() {
+  requestAnimationFrame(animate);
+}
 
 // App not in focus
 getCurrentWindow().listen("tauri://blur", () => {
@@ -375,6 +384,46 @@ deviceConnectButton?.addEventListener("click", async () => {
     }
   } catch (e) {
     console.log("Error connecting: ", e);
+  }
+});
+
+interface CtrlPacket {
+  type: "Ctrl";
+  data: {
+    throttle: number;
+    steering: number;
+    mode: number;
+  };
+}
+interface PNTTPacket {
+  type: "PNTT";
+  data: {
+    heading: number;
+    roll: number;
+    pitch: number;
+    temp_c_0: number;
+    acc_total: number;
+    pressure: number;
+    temp_c_1: number;
+    timestamp_us: number;
+  };
+}
+
+type TelemetryEvent = CtrlPacket | PNTTPacket;
+
+listen<TelemetryEvent>("TELEMETRY", (event) => {
+  const packet = event.payload;
+  console.log(packet);
+
+  switch (packet.type) {
+    case "PNTT": {
+      if (mowerGroup && mowerModel) {
+        // heading usually in degrees (0 = north, clockwise)
+        mowerGroup.rotation.x = THREE.MathUtils.degToRad(packet.data.pitch);
+        mowerGroup.rotation.y = THREE.MathUtils.degToRad(packet.data.heading);
+        mowerGroup.rotation.z = THREE.MathUtils.degToRad(packet.data.roll);
+      }
+    }
   }
 });
 

@@ -1575,6 +1575,7 @@ dependencies = [
  "esp-idf-sys",
  "heapless 0.9.1",
  "log",
+ "serde",
  "ureq",
 ]
 

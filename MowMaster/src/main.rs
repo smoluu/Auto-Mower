@@ -102,7 +102,7 @@ fn main() -> Result<(), Error> {
                                         timestamp_us,
                                     } => {
                                         info!(
-                                            "PNTT -> heading={:.2}°, roll={:.2}°, pitch={:.2}°, temp_0={:.2}°C, acc={:.2}g, press={:.0}, temp_1={:.2}, Pa, ts={}",
+                                            "PNTT -> heading={:+.2}°, roll={:+.2}°, pitch={:+.2}°, temp_0={:+.2}°C, acc={:+.2}g, press={:.1}, temp_1={:.2}, Pa, ts={}",
                                             heading,
                                             roll,
                                             pitch,

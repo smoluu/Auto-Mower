@@ -1,5 +1,6 @@
 use log::LevelFilter;
 
+mod packets;
 mod gamepad;
 mod state_manager;
 

@@ -1,16 +1,15 @@
 use std::{
     net::{ SocketAddr, UdpSocket },
-    sync::{ Arc, Mutex },
+    sync::{ Arc, Mutex, mpsc::channel},
     thread,
     time::{ Duration, Instant },
 };
+use anyhow::anyhow;
 use esp_idf_hal::{
-    can::AsyncCanDriver,
     gpio::{ self, AnyIOPin, AnyOutputPin, Output, PinDriver, Pins },
     io::Read,
     ledc::{ LedcDriver, LedcTimer, LedcTimerDriver, config::TimerConfig },
     prelude::Peripherals,
-    timer::TimerDriver,
     uart,
     units::Hertz,
 };
@@ -26,7 +25,7 @@ use log::{ self, Log, debug, error, info, warn };
 use esp_idf_sys::*;
 use ota::init_ota;
 
-use crate::packets::Packet;
+use crate::{ bmp280::Bmp280Reading, packets::Packet };
 
 mod ota;
 mod wifi;
@@ -47,7 +46,7 @@ const PI: f32 = 3.141592;
 const PNTT_PACKET_INTERVAL: Duration = Duration::from_millis(50);
 
 // Sensor i2c adresses
-static SENSOR_ADDR_GY273: u8 = 0x2c;
+static SENSOR_ADDR_GY273: u8 = 0x2c; // This keeps changing for some reason between 0xc & 0x2c
 static SENSOR_ADDR_MPU: u8 = 0x68;
 static SENSOR_ADDR_BMP280: u8 = 0x77;
 
@@ -127,7 +126,7 @@ fn main() -> anyhow::Result<()> {
         .configure(&mut i2c)
         .map_err(|e| anyhow::anyhow!("Error configuring bmp280 sensor: {}", e))?;
 
-    // Beeper setup
+    // Buzzer setup
     let buzzer_timer_cfg = TimerConfig::new()
         .frequency(Hertz(20_000))
         .resolution(esp_idf_hal::ledc::Resolution::Bits10);
@@ -141,16 +140,21 @@ fn main() -> anyhow::Result<()> {
         peripherals.pins.gpio5
     ).unwrap();
 
-    // Controlling buzzer
-
-    // buzzer_pwm.set_duty(512)?;
-    // buzzer_timer.set_frequency(Hertz(800))?;
-    // thread::sleep(Duration::from_millis(1000));
-    // buzzer_pwm.set_duty(0)?;
-
+    // Buzzer thread. Use buzzer_tx to play a sound
+    let (buzzer_tx, buzzer_rx) = channel();
     thread::spawn(move || {
-        buzzer::play(&mut buzzer_pwm, &mut buzzer_timer, buzzer::STARTUP);
+        loop {
+                
+            match buzzer_rx.recv() {
+                Ok(sound) => {
+                    buzzer::play(&mut buzzer_pwm, &mut buzzer_timer, sound);
+                }
+                _ => {}
+            }
+
+        }
     });
+    let _ = buzzer_tx.send(buzzer::STARTUP);
 
     // L298N Wheel Driver setup
     let motor_left_in1 = PinDriver::output(peripherals.pins.gpio11)?;
@@ -158,7 +162,7 @@ fn main() -> anyhow::Result<()> {
     let motor_right_in1 = PinDriver::output(peripherals.pins.gpio36)?;
     let motor_right_in2 = PinDriver::output(peripherals.pins.gpio37)?;
 
-    // PWM setup for motor driver speed control
+    // PWM setup for wheel motor driver speed control
     let md_timer_config = TimerConfig::new()
         .frequency(Hertz(20_000))
         .resolution(esp_idf_hal::ledc::Resolution::Bits10);
@@ -184,21 +188,19 @@ fn main() -> anyhow::Result<()> {
         0.1
     );
 
-    // // Setup BTS7960 / Mower blade motor
-    // let motor_l_en = PinDriver::output(peripherals.pins.gpio1)?;
-    // let motor_r_en = PinDriver::output(peripherals.pins.gpio2)?;
-    // let mower_timer_config = TimerConfig::new()
-    //     .frequency(Hertz(20_000))
-    //     .resolution(esp_idf_hal::ledc::Resolution::Bits10);
-    // let mower_timer = LedcTimerDriver::new(peripherals.ledc.timer2, &mower_timer_config)?;
-    // let mower_pwm = LedcDriver::new(peripherals.ledc.channel3, &mower_timer, peripherals.pins.gpio4)?;
-    // let mut mower = mower::Mower::new(mower_pwm, motor_l_en, motor_r_en, 0.1);
-
-    // mower.set_speed(0.7);
-    // thread::sleep(Duration::from_millis(2000));
-    // mower.set_speed(1.0);
-    // thread::sleep(Duration::from_millis(2000));
-    // mower.set_speed(0.0);
+    // Setup BTS7960 / Mower blade motor
+    // setup pwm drivers for both L/R
+    let mower_timer_config = TimerConfig::new()
+        .frequency(Hertz(20_000))
+        .resolution(esp_idf_hal::ledc::Resolution::Bits10);
+    let mower_timer = LedcTimerDriver::new(peripherals.ledc.timer2, &mower_timer_config)?;
+     let motor_l_pwm = LedcDriver::new(
+        peripherals.ledc.channel3,
+        &mower_timer,
+        peripherals.pins.gpio35
+    )?;
+    let mut mower = mower::Mower::new(motor_l_pwm, 0, 0.05);
+    let mut mower_speed_target: f32 = 0.0;
 
     // Check OTA partitions
     //info!("Init ota: {:?}", init_ota()?);
@@ -217,10 +219,6 @@ fn main() -> anyhow::Result<()> {
         // Time stamp for PNTT packets
         let timestamp_us = unsafe { esp_timer_get_time() };
 
-        // Reading GY273
-        let gy273_reading = gy273.read(&mut i2c);
-        //info!("Heading: {:.2}", gy273_reading.heading);
-
         // Reading MPU
         let mpu_reading: mpu::MPUReading = mpu.read(&mut i2c);
         // info!(
@@ -231,8 +229,25 @@ fn main() -> anyhow::Result<()> {
         // mpu_reading.acc_total
         // );
 
+        // Reading GY273
+        let mut gy273_reading = gy273.read(&mut i2c);
+
+        // gy273_reading.tilt_compensate(
+        //     mpu_reading.roll,
+        //     mpu_reading.pitch,
+
+        // );
+        //info!("Heading: {:.2}", gy273_reading.heading);
+        //info!("Tilt Compensated Heading: {:.2}", gy273_reading.tilt_compensated_heading);
+
         // Reading bmp280
-        let bmp_reading: bmp280::Bmp280Reading = bmp280.read(&mut i2c);
+        let bmp_reading: bmp280::Bmp280Reading = match bmp280.read(&mut i2c) {
+            Ok(reading) => { reading }
+            Err(e) => {
+                error!("Error reading bmp280: {e}");
+                Bmp280Reading { pressure: 0.0, temperature: 0.0 }
+            }
+        };
         // info!(
         // "BMP280 -> Pressure: {}Pa Temperature: {}°C",
         // bmp_reading.pressure,
@@ -240,7 +255,6 @@ fn main() -> anyhow::Result<()> {
         // );
 
         // Reading lidar
-        //drive.set_speed(1.0, 1.0);
 
         let mut buf = [0; 2048];
         // Receive UDP packets from MowMaster
@@ -252,14 +266,29 @@ fn main() -> anyhow::Result<()> {
 
                 if let Some(packet) = Packet::parse(payload) {
                     match packet {
-                        Packet::Ctrl { throttle, steering, mode } => {
+                        Packet::Ctrl { throttle, steering, mode, mower_ena, mower_speed } => {
                             info!("CTRL PACKET: {:?}", &payload);
-                            info!("THROTTLE {}", throttle);
+                            info!("mower speed {}", mower_speed);
+                            info!("mower ena {}", mower_ena);
                             let (left_target, right_target) = drive::arcade_to_diff(
                                 throttle,
                                 steering
                             );
+
+                            mower_speed_target = mower_speed;
                             drive.set_speed(left_target, right_target);
+                            if mower_ena == 1 {
+                                // warning sound
+                                if mower.enabled == 0 && mower_ena == 1 {
+                                    
+                                    let _ = buzzer_tx.send(buzzer::WARNING_MOWER_ENABLED);
+                                    mower.enabled = 1;
+                                }
+                            }
+                            if mower.enabled == 1 && mower_ena == 0 {
+                                let _ = buzzer_tx.send(buzzer::WARNING_MOWER_DISABLED);
+                                mower.enabled = 0;
+                            }
                         }
                         Packet::Keepalive {} => {
                             // Echo keepalive
@@ -276,20 +305,20 @@ fn main() -> anyhow::Result<()> {
                 }
             }
             Err(e) =>
-                match e.kind() {
-                    std::io::ErrorKind::WouldBlock => {} //  No data, skip
-                    _ => {
-                        info!("encountered IO error: {e}");
-                        std::thread::sleep(std::time::Duration::from_millis(100));
-                    }
+            match e.kind() {
+                std::io::ErrorKind::WouldBlock => {} //  No data, skip
+                _ => {
+                    info!("encountered IO error: {e}");
+                    std::thread::sleep(std::time::Duration::from_millis(100));
                 }
+            }
         }
-
+        
         // Send UDP packets to MowMaster if destination src is set
-
+        
         if let Some(src) = mowmaster_src {
             // Create PNTT packet
-
+            
             if last_pntt_instant.elapsed() >= PNTT_PACKET_INTERVAL {
                 let packet = Packet::PNTT {
                     heading: gy273_reading.heading,
@@ -309,6 +338,14 @@ fn main() -> anyhow::Result<()> {
                     last_pntt_instant = Instant::now();
                 }
             }
+        }
+
+
+        // damped speed setting needs to be set every loop or it never reaches target speed
+        if mower.enabled == 1 {
+            mower.set_speed_damped(mower_speed_target);
+        } else {
+            mower.set_speed_damped(0.0);
         }
     }
 }

@@ -1,9 +1,14 @@
-#[derive(Debug)]
+use serde::Serialize;
+
+#[derive(Debug,Serialize)]
+#[serde(tag = "type", content = "data")]
 pub enum Packet {
     Ctrl {
         throttle: f32,
         steering: f32,
         mode: u8,
+        mower_ena: u8,
+        mower_speed: f32,
     },
     Keepalive {},
     Unknown {
@@ -31,12 +36,15 @@ impl Packet {
 
         match &data[0..4] {
             b"KEEP" => { Some(Packet::Keepalive {}) }
-            b"CTRL" if data.len() == 13 => {
+
+            b"CTRL" if data.len() == 18 => {
                 let throttle = f32::from_le_bytes([data[4], data[5], data[6], data[7]]);
                 let steering = f32::from_le_bytes([data[8], data[9], data[10], data[11]]);
                 let mode = data[12];
+                let mower_ena = data[13];
+                let mower_speed = f32::from_le_bytes([data[14], data[15], data[16], data[17]]);
 
-                Some(Packet::Ctrl { throttle, steering, mode })
+                Some(Packet::Ctrl { throttle, steering, mode, mower_ena, mower_speed })
             }
             b"PNTT" if data.len() == 40 => {
                 // All floats are little-endian
