@@ -1,0 +1,3 @@
+-- Copy source files to phone
+rm -r /target
+scp -r . mowmaster:/data/data/com.termux/files/home/MowMaster

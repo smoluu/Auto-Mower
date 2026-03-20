@@ -1,19 +1,17 @@
-use crate::gamepad::{self, ControlInputs, RobotMode};
-use log::{error, info, warn};
-use serde::{Deserialize, Serialize};
+use crate::gamepad::{ self, ControlInputs, RobotMode };
+use crate::packets::Packet;
+use log::{ debug, error, info, warn };
+use serde::{ Deserialize, Serialize };
 use tauri::http::uri::Port;
 use std::fmt::format;
 use std::thread;
 use std::{
-    net::{IpAddr, Ipv4Addr, SocketAddr, UdpSocket},
+    net::{ IpAddr, Ipv4Addr, SocketAddr, UdpSocket },
     os::linux::raw::stat,
-    sync::{
-        mpsc::{self, Receiver, Sender, TryRecvError},
-        Arc, Mutex,
-    },
-    time::{Duration, Instant},
+    sync::{ mpsc::{ self, Receiver, Sender, TryRecvError }, Arc, Mutex },
+    time::{ Duration, Instant },
 };
-use tauri::{App, AppHandle, Emitter, Manager};
+use tauri::{ App, AppHandle, Emitter, Manager };
 const UDP_CONNECTION_TIMEOUT: Duration = Duration::from_millis(5000); // If no packets are received for this time, return from UDP connection thread
 
 // State manager holding all app state
@@ -43,6 +41,8 @@ impl StateManager {
                 throttle: 0.0,
                 steering: 0.0,
                 mode: RobotMode::MANUAL,
+                mower_ena: 0,
+                mower_speed: 0.0,
             },
         }
     }
@@ -72,19 +72,14 @@ pub type AppState = StateManager;
 pub fn connect_udp(address: String, port: u32, app_handle: AppHandle) -> Result<(), String> {
     let state = app_handle.state::<AppState>().inner();
     // check if already connected
-    if matches!(
-        state.connection,
-        ConnectionStatus::Connected | ConnectionStatus::Connecting
-    ) {
+    if matches!(state.connection, ConnectionStatus::Connected | ConnectionStatus::Connecting) {
         return Err("Already connecting or connected".to_string());
     }
     app_handle
         .emit("state_connection_update", ConnectionStatus::Connecting)
         .expect("Failed to emit state");
     let state_arc = Arc::new(Mutex::new(state.clone()));
-    let mut state_lock = state_arc
-        .lock()
-        .map_err(|e| format!("failed to lock state {}", e))?;
+    let mut state_lock = state_arc.lock().map_err(|e| format!("failed to lock state {}", e))?;
     state_lock.connection = ConnectionStatus::Connecting;
 
     let socket = state_lock.socket.lock().unwrap();
@@ -100,7 +95,7 @@ pub fn connect_udp(address: String, port: u32, app_handle: AppHandle) -> Result<
     let socket_arc_clone = state_lock.socket.clone();
     let app_handle_clone = app_handle.clone();
 
-    let dest_string = format!("{}:{}",address, port);
+    let dest_string = format!("{}:{}", address, port);
     let dest = dest_string.parse::<SocketAddr>().unwrap();
 
     thread::spawn(move || {
@@ -146,9 +141,7 @@ pub fn connect_udp(address: String, port: u32, app_handle: AppHandle) -> Result<
 
         let _ = socket.set_nonblocking(true);
         state.connection = ConnectionStatus::Connected;
-        app_handle_clone
-            .emit("state_connection_update", ConnectionStatus::Connected)
-            .unwrap();
+        app_handle_clone.emit("state_connection_update", ConnectionStatus::Connected).unwrap();
 
         let (udp_tx, udp_rx) = mpsc::channel::<&'static [u8]>();
         state.udp_tx = Some(udp_tx.clone());
@@ -188,17 +181,15 @@ pub fn connect_udp(address: String, port: u32, app_handle: AppHandle) -> Result<
                 last_keepalive = Instant::now();
             }
 
-
             // Return if no packets are received for some time
             if last_packet_recv_time.elapsed() > UDP_CONNECTION_TIMEOUT {
-                error!(
-                    "No data received for {} ms",
-                    UDP_CONNECTION_TIMEOUT.as_millis()
-                );
+                error!("No data received for {} ms", UDP_CONNECTION_TIMEOUT.as_millis());
                 state_lock.connection = ConnectionStatus::Disconnected;
                 app_handle_clone
                     .emit("state_connection_update", ConnectionStatus::Disconnected)
                     .unwrap();
+                // Reset socket
+                state_lock.socket = Arc::new(Mutex::new(UdpSocket::bind("0.0.0.0:0").unwrap()));
                 return;
             }
 
@@ -220,9 +211,44 @@ pub fn connect_udp(address: String, port: u32, app_handle: AppHandle) -> Result<
                     dest = Some(src);
                     last_packet_recv_time = Instant::now();
                     info!("Received {:?} bytes", len);
-                    app_handle_clone
-                        .emit("test", &buffer[0..len])
-                        .expect("Failed to emit data");
+
+                    // Parse received packets
+
+                    if let Some(packet) = Packet::parse(&buffer[..len]) {
+                        match &packet {
+                            Packet::PNTT {
+                                heading,
+                                roll,
+                                pitch,
+                                temp_c_0,
+                                acc_total,
+                                pressure,
+                                temp_c_1,
+                                timestamp_us,
+                            } => {
+                                // Emit to frontend telemetry handler
+                                app_handle_clone.emit("TELEMETRY", &packet).unwrap();
+                                debug!(
+                                    "PNTT -> heading={:+.2}°, roll={:+.2}°, pitch={:+.2}°, temp_0={:+.2}°C, acc={:+.2}g, press={:.1}, temp_1={:.2}, Pa, ts={}",
+                                    heading,
+                                    roll,
+                                    pitch,
+                                    temp_c_0,
+                                    acc_total,
+                                    pressure,
+                                    temp_c_1,
+                                    timestamp_us
+                                );
+                                
+                            }
+                            Packet::Keepalive {} => {} // ignore
+                            _ => {
+                                warn!("Packet malformed");
+                            }
+                        }
+                    }
+
+                    app_handle_clone.emit("test", &buffer[0..len]).expect("Failed to emit data");
                 }
                 Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {}
                 Err(e) => {
